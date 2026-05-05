@@ -1,0 +1,72 @@
+/* Boxxy Terminal — GNOME Shell Extension Styles */
+
+/* Panel indicator icon */
+.boxxy-panel-icon {
+    padding: 0 4px;
+}
+
+/* Status labels in the menu */
+.boxxy-status-label {
+    font-weight: bold;
+}
+
+.boxxy-status-running {
+    color: #33d17a;
+}
+
+.boxxy-status-stopped {
+    color: #e5a50a;
+}
+
+/* ---- Character section ---- */
+
+/* Section header */
+.boxxy-char-header {
+    font-size: 0.85em;
+    font-weight: bold;
+    color: #9a9996;
+    padding-top: 6px;
+}
+
+/* Character row container */
+.boxxy-char-item {
+    padding-left: 12px;
+    padding-right: 8px;
+    spacing: 8px;
+}
+
+/* Active (in-use) row is clickable */
+.boxxy-char-item-active:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.boxxy-char-item-active:active {
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+/* Character name label */
+.boxxy-char-name {
+    font-size: 0.95em;
+}
+
+/* Character avatar icon */
+.boxxy-char-avatar {
+    border-radius: 12px;
+}
+
+/* Colour dot (fallback when no avatar) */
+.boxxy-color-dot {
+    border-radius: 6px;
+    margin: 4px;
+}
+
+/* Status labels */
+.boxxy-char-status-active {
+    font-size: 0.85em;
+    color: #33d17a;
+}
+
+.boxxy-char-status-idle {
+    font-size: 0.85em;
+    color: #9a9996;
+}

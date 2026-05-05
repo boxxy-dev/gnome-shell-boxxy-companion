@@ -1,0 +1,9 @@
+{
+  "name": "Boxxy Terminal",
+  "description": "Companion for Boxxy",
+  "uuid": "boxxy@boxxy.dev",
+  "url": "https://github.com/boxxy-dev/gnome-shell-boxxy-companion",
+  "shell-version": [
+    "50"
+  ]
+}
