@@ -70,6 +70,7 @@ function getCharAvatarPath(slug) {
 
 export default class BoxxyExtension extends Extension {
     enable() {
+        this._settings = this.getSettings();
         this._proxy = null;
         this._ownerId = 0;
         this._agentProxy = null;
@@ -82,14 +83,70 @@ export default class BoxxyExtension extends Extension {
 
         this._charSignalId = 0;
         this._charActive = false;
+        this._currentCatalog = [];
 
         this._buildIndicator();
         this._watchDaemon();
+        this._setupShortcuts();
     }
 
     disable() {
+        this._teardownShortcuts();
         this._unwatchDaemon();
         this._destroyIndicator();
+        this._settings = null;
+    }
+
+    // -- shortcuts ----------------------------------------------------------
+
+    _setupShortcuts() {
+        for (let i = 1; i <= 10; i++) {
+            const name = `shortcut-${i}`;
+            Main.wm.addKeybinding(
+                name,
+                this._settings,
+                Meta.KeyBindingFlags.NONE,
+                Shell.ActionMode.ALL,
+                () => this._handleShortcut(i)
+            );
+        }
+    }
+
+    _teardownShortcuts() {
+        for (let i = 1; i <= 10; i++) {
+            Main.wm.removeKeybinding(`shortcut-${i}`);
+        }
+    }
+
+    _handleShortcut(index) {
+        const slugs = this._settings.get_strv('shortcut-slugs');
+        const slug = slugs[index - 1];
+        if (!slug)
+            return;
+
+        log(`[boxxy] shortcut ${index} triggered for slug: ${slug}`);
+
+        if (!this._currentCatalog) {
+            log('[boxxy] shortcut: no catalog available');
+            return;
+        }
+
+        const char = this._currentCatalog.find(c => c.config.name === slug);
+        if (!char) {
+            log(`[boxxy] shortcut: character ${slug} not found in catalog`);
+            return;
+        }
+
+        const isActive =
+            typeof char.status === 'object' && char.status !== null && 'Active' in char.status;
+        
+        if (isActive) {
+            const paneId = char.status.Active.pane_id;
+            log(`[boxxy] shortcut: focusing character ${slug} (pane=${paneId})`);
+            this._requestFocusPane(paneId);
+        } else {
+            log(`[boxxy] shortcut: character ${slug} is not active`);
+        }
     }
 
     // -- panel indicator ----------------------------------------------------
@@ -148,6 +205,15 @@ export default class BoxxyExtension extends Extension {
         this._restartItem.connect('activate', () => spawnAgentCommand('restart'));
         menu.addMenuItem(this._restartItem);
 
+        // Separator before settings
+        this._settingsSep = new PopupMenu.PopupSeparatorMenuItem();
+        menu.addMenuItem(this._settingsSep);
+
+        // Settings
+        this._settingsItem = new PopupMenu.PopupMenuItem('Extension Settings');
+        this._settingsItem.connect('activate', () => this.openPreferences());
+        menu.addMenuItem(this._settingsItem);
+
         Main.panel.addToStatusArea('boxxy-terminal', this._indicator);
 
         this._updateStatus(false);
@@ -162,6 +228,8 @@ export default class BoxxyExtension extends Extension {
         this._charSection.header = null;
         this._charSection.headerSep = null;
         this._charSection.actionSep = null;
+        this._settingsSep = null;
+        this._settingsItem = null;
     }
 
     // -- daemon watcher -----------------------------------------------------
@@ -433,6 +501,7 @@ export default class BoxxyExtension extends Extension {
 
         const catalog = snapshot.catalog || [];
         log('[boxxy] chars: applying snapshot, catalog size=' + catalog.length);
+        this._currentCatalog = catalog;
         this._charActive = true;
         this._rebuildCharacterItems(catalog);
     }

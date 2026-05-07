@@ -8,9 +8,11 @@ BUILD_DIR  := build/$(UUID)
 
 # All files that ship with the extension
 SRC_FILES  := $(SRC_DIR)/extension.js \
+              $(SRC_DIR)/prefs.js \
               $(SRC_DIR)/metadata.json \
               $(SRC_DIR)/stylesheet.css
 RES_DIR    := $(SRC_DIR)/resources
+SCHEMA_DIR := $(SRC_DIR)/schemas
 
 .PHONY: build install uninstall clean pack enable disable debug
 
@@ -18,10 +20,13 @@ RES_DIR    := $(SRC_DIR)/resources
 build: $(BUILD_DIR)
 	@for f in $(SRC_FILES); do \
 		dest="$(BUILD_DIR)/$$(basename $$f)"; \
-		cmp -s "$$f" "$$dest" 2>/dev/null || cp "$$f" "$$dest"; \
+		[ -f "$$f" ] && (cmp -s "$$f" "$$dest" 2>/dev/null || cp "$$f" "$$dest"); \
 	done
 	@mkdir -p "$(BUILD_DIR)/resources"
-	@cp -r "$(RES_DIR)/"* "$(BUILD_DIR)/resources/"
+	@cp -r "$(RES_DIR)/"* "$(BUILD_DIR)/resources/" 2>/dev/null || true
+	@mkdir -p "$(BUILD_DIR)/schemas"
+	@cp "$(SCHEMA_DIR)/"*.xml "$(BUILD_DIR)/schemas/"
+	@glib-compile-schemas "$(BUILD_DIR)/schemas/"
 	@echo "[OK] Build staged in $(BUILD_DIR)/"
 
 $(BUILD_DIR):

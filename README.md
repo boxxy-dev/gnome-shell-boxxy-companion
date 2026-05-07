@@ -8,6 +8,7 @@ A GNOME Shell extension that serves as a companion to the [Boxxy Terminal](https
 - **Daemon Control:** Start, stop, or restart the agent daemon with a single click.
 - **Character Roster:** View all active and available AI characters from your catalog.
 - **Quick Focus:** Click on an active character to immediately bring the corresponding terminal pane to the front.
+- **Global Shortcuts:** Assign system-wide keyboard shortcuts (via Extension Settings) to instantly focus specific characters from anywhere.
 
 ## Installation
 

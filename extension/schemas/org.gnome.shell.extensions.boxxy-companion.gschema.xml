@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.boxxy-companion" path="/org/gnome/shell/extensions/boxxy-companion/">
+    <key name="shortcut-1" type="as">
+      <default>[]</default>
+      <summary>Focus character shortcut 1</summary>
+    </key>
+    <key name="shortcut-2" type="as">
+      <default>[]</default>
+      <summary>Focus character shortcut 2</summary>
+    </key>
+    <key name="shortcut-3" type="as">
+      <default>[]</default>
+      <summary>Focus character shortcut 3</summary>
+    </key>
+    <key name="shortcut-4" type="as">
+      <default>[]</default>
+      <summary>Focus character shortcut 4</summary>
+    </key>
+    <key name="shortcut-5" type="as">
+      <default>[]</default>
+      <summary>Focus character shortcut 5</summary>
+    </key>
+    <key name="shortcut-6" type="as">
+      <default>[]</default>
+      <summary>Focus character shortcut 6</summary>
+    </key>
+    <key name="shortcut-7" type="as">
+      <default>[]</default>
+      <summary>Focus character shortcut 7</summary>
+    </key>
+    <key name="shortcut-8" type="as">
+      <default>[]</default>
+      <summary>Focus character shortcut 8</summary>
+    </key>
+    <key name="shortcut-9" type="as">
+      <default>[]</default>
+      <summary>Focus character shortcut 9</summary>
+    </key>
+    <key name="shortcut-10" type="as">
+      <default>[]</default>
+      <summary>Focus character shortcut 10</summary>
+    </key>
+    <key name="shortcut-slugs" type="as">
+      <default>['', '', '', '', '', '', '', '', '', '']</default>
+      <summary>Slugs for shortcuts 1-10</summary>
+    </key>
+  </schema>
+</schemalist>
