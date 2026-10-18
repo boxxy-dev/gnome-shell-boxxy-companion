@@ -1,8 +1,28 @@
 /* Boxxy Terminal — GNOME Shell Extension Styles */
 
-/* Panel indicator icon */
+/* Panel indicator container & icon */
+.boxxy-panel-box {
+    spacing: 4px;
+}
+
 .boxxy-panel-icon {
-    padding: 0 4px;
+    padding: 0 2px;
+}
+
+/* Panel badge for detached background shells */
+.boxxy-panel-badge {
+    font-size: 0.8em;
+    font-weight: bold;
+    color: #ffffff;
+    background-color: rgba(168, 85, 247, 0.85);
+    border-radius: 99px;
+    padding: 1px 6px;
+    margin-left: 2px;
+}
+
+.boxxy-panel-badge-warning {
+    background-color: rgba(229, 165, 10, 0.92);
+    color: #1e1e1e;
 }
 
 /* Status labels in the menu */
@@ -16,6 +36,60 @@
 
 .boxxy-status-stopped {
     color: #e5a50a;
+}
+
+/* ---- Detached Background Shells section ---- */
+
+.boxxy-detached-item {
+    padding-left: 12px;
+    padding-right: 8px;
+    spacing: 8px;
+}
+
+.boxxy-detached-icon {
+    color: #c0bfbc;
+}
+
+.boxxy-detached-title {
+    font-size: 0.92em;
+    font-weight: bold;
+}
+
+.boxxy-detached-title-warning {
+    color: #f8e45c;
+}
+
+.boxxy-detached-subtitle {
+    font-size: 0.78em;
+    color: #9a9996;
+}
+
+.boxxy-action-btn {
+    font-size: 0.8em;
+    font-weight: bold;
+    border-radius: 6px;
+    padding: 3px 8px;
+    margin-left: 4px;
+}
+
+.boxxy-restore-btn {
+    background-color: rgba(168, 85, 247, 0.25);
+    color: #d8b4fe;
+}
+
+.boxxy-restore-btn:hover {
+    background-color: rgba(168, 85, 247, 0.45);
+    color: #ffffff;
+}
+
+.boxxy-kill-btn {
+    background-color: rgba(224, 27, 36, 0.22);
+    color: #f66151;
+}
+
+.boxxy-kill-btn:hover {
+    background-color: rgba(224, 27, 36, 0.42);
+    color: #ffffff;
 }
 
 /* ---- Character section ---- */

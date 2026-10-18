@@ -3,6 +3,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
+import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
@@ -13,13 +14,18 @@ import St from 'gi://St';
 
 const D_BUS_SERVICE = 'dev.boxxy.BoxxyAgent';
 const AGENT_BINARY   = 'boxxy-agent';
+const TERMINAL_BINARY = 'boxxy-terminal';
 const AGENT_IFACE    = 'dev.boxxy.BoxxyTerminal.Agent';
 const AGENT_PATH     = '/dev/boxxy/Agent';
 
 // zbus converts Rust snake_case to D-Bus PascalCase by default
-const METHOD_GET_SNAPSHOT    = 'GetRegistrySnapshot';
-const METHOD_REQUEST_FOCUS   = 'RequestFocusPane';
-const SIGNAL_CLAIMS_CHANGED  = 'ClaimsChanged';
+const METHOD_GET_SNAPSHOT          = 'GetRegistrySnapshot';
+const METHOD_REQUEST_FOCUS         = 'RequestFocusPane';
+const METHOD_GET_DETACHED          = 'GetDetachedSessions';
+const METHOD_RESTORE_DETACHED      = 'RequestRestoreDetached';
+const METHOD_TERMINATE_DETACHED    = 'TerminateDetachedSession';
+const SIGNAL_CLAIMS_CHANGED        = 'ClaimsChanged';
+const SIGNAL_DETACHED_CHANGED      = 'DetachedSessionsChanged';
 
 const AVATAR_SIZE    = 24;
 const COLOR_DOT_SIZE = 12;
@@ -28,6 +34,10 @@ const COLOR_DOT_SIZE = 12;
 
 function resolveAgentBinary() {
     const homeDir = GLib.get_home_dir();
+    const binPath = GLib.build_filenamev([homeDir, '.local', 'boxxy-terminal', 'bin', AGENT_BINARY]);
+    if (GLib.file_test(binPath, GLib.FileTest.IS_EXECUTABLE))
+        return binPath;
+
     const nativePath = GLib.build_filenamev([homeDir, '.local', 'boxxy-terminal', AGENT_BINARY]);
     if (GLib.file_test(nativePath, GLib.FileTest.IS_EXECUTABLE))
         return nativePath;
@@ -37,6 +47,22 @@ function resolveAgentBinary() {
         return flatpakPath;
 
     return AGENT_BINARY;
+}
+
+function resolveTerminalCommand() {
+    const homeDir = GLib.get_home_dir();
+    const binPath = GLib.build_filenamev([homeDir, '.local', 'boxxy-terminal', 'bin', TERMINAL_BINARY]);
+    if (GLib.file_test(binPath, GLib.FileTest.IS_EXECUTABLE))
+        return shellQuote(binPath);
+
+    const localBin = GLib.build_filenamev([homeDir, '.local', 'bin', TERMINAL_BINARY]);
+    if (GLib.file_test(localBin, GLib.FileTest.IS_EXECUTABLE))
+        return shellQuote(localBin);
+
+    if (GLib.find_program_in_path(TERMINAL_BINARY))
+        return TERMINAL_BINARY;
+
+    return 'flatpak run dev.boxxy.BoxxyTerminal';
 }
 
 function shellQuote(str) {
@@ -59,6 +85,25 @@ function spawnAgentCommand(subcommand) {
     }
 }
 
+function launchBoxxyTerminal() {
+    const cmdline = resolveTerminalCommand();
+    log(`[boxxy] launching Boxxy Terminal: ${cmdline}`);
+    try {
+        GLib.spawn_command_line_async(cmdline);
+    } catch (e) {
+        logError(e, '[boxxy] error launching Boxxy Terminal');
+    }
+}
+
+function formatShortCwd(cwd) {
+    if (!cwd)
+        return '~';
+    const homeDir = GLib.get_home_dir();
+    if (homeDir && cwd.startsWith(homeDir))
+        return '~' + cwd.slice(homeDir.length);
+    return cwd;
+}
+
 function getCharAvatarPath(slug) {
     const configDir = GLib.build_filenamev([
         GLib.get_home_dir(), '.config', 'boxxy-terminal', 'boxxyclaw', 'characters',
@@ -76,14 +121,21 @@ export default class BoxxyExtension extends Extension {
         this._agentProxy = null;
 
         this._indicator = null;
+        this._panelBox = null;
+        this._panelIcon = null;
+        this._badgeLabel = null;
         this._statusItem = null;
+        this._detachedSection = {};
         this._charSection = {};
         this._toggleItem = null;
         this._restartItem = null;
 
         this._charSignalId = 0;
+        this._detachedSignalId = 0;
+        this._menuOpenSignalId = 0;
         this._charActive = false;
         this._currentCatalog = [];
+        this._currentDetached = [];
 
         this._buildIndicator();
         this._watchDaemon();
@@ -155,15 +207,33 @@ export default class BoxxyExtension extends Extension {
         this._iconOn = new Gio.FileIcon({file: Gio.File.new_for_path(this.path + '/resources/boxxyclaw-symbolic.svg')});
         this._iconOff = new Gio.FileIcon({file: Gio.File.new_for_path(this.path + '/resources/boxxyclaw-off-symbolic.svg')});
 
+        this._panelBox = new St.BoxLayout({
+            style_class: 'panel-status-menu-box boxxy-panel-box',
+        });
+
         this._panelIcon = new St.Icon({
             gicon: this._iconOff,
             style_class: 'system-status-icon boxxy-panel-icon',
         });
 
+        this._badgeLabel = new St.Label({
+            text: '',
+            y_align: Clutter.ActorAlign.CENTER,
+            style_class: 'boxxy-panel-badge',
+            visible: false,
+        });
+
+        this._panelBox.add_child(this._panelIcon);
+        this._panelBox.add_child(this._badgeLabel);
+
         this._indicator = new PanelMenu.Button(0.5, 'Boxxy Terminal', false);
-        this._indicator.add_child(this._panelIcon);
+        this._indicator.add_child(this._panelBox);
 
         const menu = this._indicator.menu;
+        this._menuOpenSignalId = menu.connect('open-state-changed', (_menu, isOpen) => {
+            if (isOpen && this._proxy?.g_name_owner)
+                this._fetchDetachedSessions();
+        });
 
         // Status line (index 0)
         this._statusItem = new PopupMenu.PopupMenuItem('', {});
@@ -172,11 +242,25 @@ export default class BoxxyExtension extends Extension {
         this._statusItem.label.add_style_class_name('boxxy-status-label');
         menu.addMenuItem(this._statusItem);
 
-        // Separator before characters (index 1)
+        // Separator before detached background shells (index 1)
+        this._detachedSection.headerSep = new PopupMenu.PopupSeparatorMenuItem();
+        this._detachedSection.headerSep.visible = false;
+        menu.addMenuItem(this._detachedSection.headerSep);
+
+        // Detached background shells header row (index 2)
+        this._detachedSection.headerItem = this._createDetachedHeaderItem();
+        this._detachedSection.headerItem.visible = false;
+        menu.addMenuItem(this._detachedSection.headerItem);
+
+        // Detached items start at index 3
+        this._detachedSection.insertAt = 3;
+        this._detachedSection.items = [];
+
+        // Separator before characters
         this._charSection.headerSep = new PopupMenu.PopupSeparatorMenuItem();
         menu.addMenuItem(this._charSection.headerSep);
 
-        // Characters header (index 2)
+        // Characters header
         this._charSection.header = new PopupMenu.PopupMenuItem('');
         this._charSection.header.setOrnament(PopupMenu.Ornament.NONE);
         this._charSection.header.reactive = false;
@@ -184,8 +268,7 @@ export default class BoxxyExtension extends Extension {
         this._charSection.header.visible = false;
         menu.addMenuItem(this._charSection.header);
 
-        // Character items go here (index 3)
-        this._charSection.insertAt = 3;
+        // Character items list
         this._charSection.items = [];
 
         // Separator before actions
@@ -220,10 +303,20 @@ export default class BoxxyExtension extends Extension {
     }
 
     _destroyIndicator() {
+        if (this._menuOpenSignalId && this._indicator?.menu) {
+            this._indicator.menu.disconnect(this._menuOpenSignalId);
+            this._menuOpenSignalId = 0;
+        }
         if (this._indicator) {
             this._indicator.destroy();
             this._indicator = null;
         }
+        this._panelBox = null;
+        this._panelIcon = null;
+        this._badgeLabel = null;
+        this._detachedSection.items = [];
+        this._detachedSection.headerItem = null;
+        this._detachedSection.headerSep = null;
         this._charSection.items = [];
         this._charSection.header = null;
         this._charSection.headerSep = null;
@@ -267,6 +360,7 @@ export default class BoxxyExtension extends Extension {
         this._proxy = null;
         this._agentProxy = null;
         this._unsubscribeCharacters();
+        this._unsubscribeDetachedSessions();
     }
 
     // -- status updates -----------------------------------------------------
@@ -299,22 +393,26 @@ export default class BoxxyExtension extends Extension {
             log('[boxxy] chars: already populated');
             return;
         }
-        log('[boxxy] chars: daemon started, fetching registry');
+        log('[boxxy] daemon started, fetching registry and detached sessions');
 
         this._ensureAgentProxy();
         this._fetchRegistry();
+        this._fetchDetachedSessions();
         this._subscribeCharacters();
+        this._subscribeDetachedSessions();
     }
 
     _onDaemonStopped() {
-        log('[boxxy] chars: daemon stopped, clearing');
+        log('[boxxy] daemon stopped, clearing state');
         this._agentProxy = null;
         this._unsubscribeCharacters();
+        this._unsubscribeDetachedSessions();
+        this._clearDetachedItems();
         this._clearCharacterItems();
         this._charActive = false;
     }
 
-    // -- agent proxy (for focus requests) -----------------------------------
+    // -- agent proxy (for focus & restore requests) -------------------------
 
     _ensureAgentProxy() {
         if (this._agentProxy)
@@ -334,7 +432,7 @@ export default class BoxxyExtension extends Extension {
             (proxy, result) => {
                 try {
                     proxy.init_finish(result);
-                    log('[boxxy] agent proxy ready for focus requests');
+                    log('[boxxy] agent proxy ready');
                 } catch (e) {
                     logError(e, '[boxxy] agent proxy init failed');
                     this._agentProxy = null;
@@ -385,9 +483,6 @@ export default class BoxxyExtension extends Extension {
     }
 
     _requestFocusPane(paneId) {
-        // Activate the Boxxy Terminal window first — on Wayland the daemon
-        // cannot steal focus, but the Shell extension can push the window
-        // to the foreground directly.
         this._focusBoxxyWindow();
 
         if (!this._agentProxy || !this._agentProxy.g_name_owner) {
@@ -417,11 +512,71 @@ export default class BoxxyExtension extends Extension {
         }
     }
 
+    _restoreDetachedSession(pid) {
+        if (!this._agentProxy || !this._agentProxy.g_name_owner) {
+            log('[boxxy] restore: agent proxy not ready');
+            return;
+        }
+
+        const hasOpenWindow = this._focusBoxxyWindow();
+
+        try {
+            const param = new GLib.Variant('(u)', [pid]);
+            this._agentProxy.call(
+                METHOD_RESTORE_DETACHED,
+                param,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                null,
+                (_proxy, result) => {
+                    try {
+                        _proxy.call_finish(result);
+                        log(`[boxxy] restore: RequestRestoreDetached(${pid}) sent`);
+                        if (!hasOpenWindow)
+                            launchBoxxyTerminal();
+                        this._fetchDetachedSessions();
+                    } catch (e) {
+                        logError(e, '[boxxy] restore: RequestRestoreDetached failed');
+                    }
+                },
+            );
+        } catch (e) {
+            logError(e, '[boxxy] restore: error calling RequestRestoreDetached');
+        }
+    }
+
+    _terminateDetachedSession(pid) {
+        if (!this._agentProxy || !this._agentProxy.g_name_owner) {
+            log('[boxxy] terminate: agent proxy not ready');
+            return;
+        }
+
+        try {
+            const param = new GLib.Variant('(u)', [pid]);
+            this._agentProxy.call(
+                METHOD_TERMINATE_DETACHED,
+                param,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                null,
+                (_proxy, result) => {
+                    try {
+                        _proxy.call_finish(result);
+                        log(`[boxxy] terminate: TerminateDetachedSession(${pid}) sent`);
+                        this._fetchDetachedSessions();
+                    } catch (e) {
+                        logError(e, '[boxxy] terminate: TerminateDetachedSession failed');
+                    }
+                },
+            );
+        } catch (e) {
+            logError(e, '[boxxy] terminate: error calling TerminateDetachedSession');
+        }
+    }
+
     // -- D-Bus calls & signals ----------------------------------------------
 
     _fetchRegistry() {
-        log('[boxxy] chars: creating agent proxy');
-
         const agentProxy = new Gio.DBusProxy({
             g_connection: Gio.DBus.session,
             g_name: D_BUS_SERVICE,
@@ -436,8 +591,6 @@ export default class BoxxyExtension extends Extension {
             (proxy, result) => {
                 try {
                     proxy.init_finish(result);
-                    log('[boxxy] chars: proxy ready, calling ' + METHOD_GET_SNAPSHOT);
-
                     const reply = proxy.call_sync(
                         METHOD_GET_SNAPSHOT,
                         null,
@@ -446,16 +599,53 @@ export default class BoxxyExtension extends Extension {
                         null,
                     );
 
-                    if (!reply) {
-                        log('[boxxy] chars: ' + METHOD_GET_SNAPSHOT + ' returned null');
+                    if (!reply)
                         return;
-                    }
 
                     const [json] = reply.deepUnpack();
-                    log('[boxxy] chars: snapshot received, length=' + (json ? json.length : 0));
                     this._applyRegistrySnapshot(JSON.parse(json));
                 } catch (e) {
                     logError(e, '[boxxy] chars: ' + METHOD_GET_SNAPSHOT + ' error');
+                }
+            },
+        );
+    }
+
+    _fetchDetachedSessions() {
+        const agentProxy = new Gio.DBusProxy({
+            g_connection: Gio.DBus.session,
+            g_name: D_BUS_SERVICE,
+            g_object_path: AGENT_PATH,
+            g_interface_name: AGENT_IFACE,
+            g_flags: Gio.DBusProxyFlags.DO_NOT_AUTO_START,
+        });
+
+        agentProxy.init_async(
+            GLib.PRIORITY_DEFAULT,
+            null,
+            (proxy, result) => {
+                try {
+                    proxy.init_finish(result);
+                    proxy.call(
+                        METHOD_GET_DETACHED,
+                        null,
+                        Gio.DBusCallFlags.NONE,
+                        -1,
+                        null,
+                        (_p, callRes) => {
+                            try {
+                                const reply = _p.call_finish(callRes);
+                                if (!reply)
+                                    return;
+                                const [json] = reply.deepUnpack();
+                                this._applyDetachedSessions(JSON.parse(json || '[]'));
+                            } catch (e) {
+                                logError(e, '[boxxy] detached: ' + METHOD_GET_DETACHED + ' call error');
+                            }
+                        },
+                    );
+                } catch (e) {
+                    logError(e, '[boxxy] detached: proxy init error');
                 }
             },
         );
@@ -465,7 +655,6 @@ export default class BoxxyExtension extends Extension {
         if (this._charSignalId)
             return;
 
-        log('[boxxy] chars: subscribing to ' + SIGNAL_CLAIMS_CHANGED);
         this._charSignalId = Gio.DBus.session.signal_subscribe(
             D_BUS_SERVICE,
             AGENT_IFACE,
@@ -476,14 +665,12 @@ export default class BoxxyExtension extends Extension {
             (_conn, _sender, _path, _iface, _signal, params) => {
                 try {
                     const [json] = params.deepUnpack();
-                    log('[boxxy] chars: ' + SIGNAL_CLAIMS_CHANGED + ' received');
                     this._applyRegistrySnapshot(JSON.parse(json));
                 } catch (e) {
                     logError(e, '[boxxy] chars: ' + SIGNAL_CLAIMS_CHANGED + ' error');
                 }
             },
         );
-        log('[boxxy] chars: signal_subscribe id=' + this._charSignalId);
     }
 
     _unsubscribeCharacters() {
@@ -493,6 +680,226 @@ export default class BoxxyExtension extends Extension {
         }
     }
 
+    _subscribeDetachedSessions() {
+        if (this._detachedSignalId)
+            return;
+
+        this._detachedSignalId = Gio.DBus.session.signal_subscribe(
+            D_BUS_SERVICE,
+            AGENT_IFACE,
+            SIGNAL_DETACHED_CHANGED,
+            AGENT_PATH,
+            null,
+            Gio.DBusSignalFlags.NONE,
+            (_conn, _sender, _path, _iface, _signal, params) => {
+                try {
+                    const [json] = params.deepUnpack();
+                    this._applyDetachedSessions(JSON.parse(json || '[]'));
+                } catch (e) {
+                    logError(e, '[boxxy] detached: ' + SIGNAL_DETACHED_CHANGED + ' error');
+                }
+            },
+        );
+    }
+
+    _unsubscribeDetachedSessions() {
+        if (this._detachedSignalId) {
+            Gio.DBus.session.signal_unsubscribe(this._detachedSignalId);
+            this._detachedSignalId = 0;
+        }
+    }
+
+    // -- detached background shells UI --------------------------------------
+
+    _createDetachedHeaderItem() {
+        const item = new PopupMenu.PopupBaseMenuItem({
+            reactive: false,
+            can_focus: false,
+        });
+
+        const titleLabel = new St.Label({
+            text: 'Background Shells',
+            style_class: 'boxxy-char-header',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._detachedSection.headerTitle = titleLabel;
+        item.add_child(titleLabel);
+
+        const restoreAllBtn = new St.Button({
+            label: 'Restore All',
+            style_class: 'boxxy-action-btn boxxy-restore-btn',
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        restoreAllBtn.connect('clicked', () => {
+            this._indicator?.menu?.close();
+            this._restoreDetachedSession(0);
+        });
+        item.add_child(restoreAllBtn);
+
+        const killAllBtn = new St.Button({
+            label: 'Kill All',
+            style_class: 'boxxy-action-btn boxxy-kill-btn',
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        killAllBtn.connect('clicked', () => {
+            this._terminateDetachedSession(0);
+        });
+        item.add_child(killAllBtn);
+
+        return item;
+    }
+
+    _clearDetachedItems() {
+        for (const item of this._detachedSection.items || [])
+            item.destroy();
+        this._detachedSection.items = [];
+
+        if (this._detachedSection.headerItem)
+            this._detachedSection.headerItem.visible = false;
+        if (this._detachedSection.headerSep)
+            this._detachedSection.headerSep.visible = false;
+        if (this._badgeLabel) {
+            this._badgeLabel.visible = false;
+            this._badgeLabel.remove_style_class_name('boxxy-panel-badge-warning');
+        }
+    }
+
+    _applyDetachedSessions(sessions) {
+        if (!this._proxy?.g_name_owner)
+            return;
+
+        const list = Array.isArray(sessions) ? sessions : [];
+        this._currentDetached = list;
+
+        for (const item of this._detachedSection.items || [])
+            item.destroy();
+        this._detachedSection.items = [];
+
+        const count = list.length;
+        const anyWaiting = list.some(s => Boolean(s.waiting_for_input));
+
+        if (this._badgeLabel) {
+            if (count > 0) {
+                this._badgeLabel.set_text(`${count}`);
+                this._badgeLabel.visible = true;
+                if (anyWaiting)
+                    this._badgeLabel.add_style_class_name('boxxy-panel-badge-warning');
+                else
+                    this._badgeLabel.remove_style_class_name('boxxy-panel-badge-warning');
+            } else {
+                this._badgeLabel.visible = false;
+                this._badgeLabel.remove_style_class_name('boxxy-panel-badge-warning');
+            }
+        }
+
+        if (this._detachedSection.headerSep)
+            this._detachedSection.headerSep.visible = count > 0;
+        if (this._detachedSection.headerItem) {
+            this._detachedSection.headerItem.visible = count > 0;
+            if (count > 0 && this._detachedSection.headerTitle)
+                this._detachedSection.headerTitle.set_text(`Background Shells (${count})`);
+        }
+
+        if (count === 0)
+            return;
+
+        const items = [];
+        for (const s of list) {
+            items.push(this._createDetachedItem(s));
+        }
+
+        for (let i = items.length - 1; i >= 0; i--)
+            this._indicator.menu.addMenuItem(items[i], this._detachedSection.insertAt);
+
+        this._detachedSection.items = items;
+    }
+
+    _createDetachedItem(session) {
+        const item = new PopupMenu.PopupBaseMenuItem({
+            reactive: false,
+            can_focus: false,
+        });
+        item.add_style_class_name('boxxy-detached-item');
+
+        const termIcon = new St.Icon({
+            icon_name: 'utilities-terminal-symbolic',
+            style_class: 'boxxy-detached-icon',
+            icon_size: 16,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        item.add_child(termIcon);
+
+        const textBox = new St.BoxLayout({
+            vertical: true,
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        const procName = session.foreground_process || 'Background Process';
+        const titleText = session.waiting_for_input
+            ? `${procName} — Waiting for input`
+            : procName;
+        const titleLabel = new St.Label({
+            text: titleText,
+            style_class: session.waiting_for_input
+                ? 'boxxy-detached-title boxxy-detached-title-warning'
+                : 'boxxy-detached-title',
+        });
+
+        const shortCwd = formatShortCwd(session.cwd);
+        const idleSecs = Number(session.idle_secs || 0);
+        const idleStr = idleSecs < 60
+            ? `${idleSecs}s idle`
+            : idleSecs < 3600
+                ? `${Math.floor(idleSecs / 60)}m idle`
+                : `${Math.floor(idleSecs / 3600)}h idle`;
+
+        const subLabel = new St.Label({
+            text: `PID ${session.pid} • ${shortCwd} • ${idleStr}`,
+            style_class: 'boxxy-detached-subtitle',
+        });
+
+        textBox.add_child(titleLabel);
+        textBox.add_child(subLabel);
+        item.add_child(textBox);
+
+        const restoreBtn = new St.Button({
+            label: 'Restore',
+            style_class: 'boxxy-action-btn boxxy-restore-btn',
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        restoreBtn.connect('clicked', () => {
+            this._indicator?.menu?.close();
+            this._restoreDetachedSession(session.pid);
+        });
+        item.add_child(restoreBtn);
+
+        const killBtn = new St.Button({
+            label: 'Kill',
+            style_class: 'boxxy-action-btn boxxy-kill-btn',
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        killBtn.connect('clicked', () => {
+            this._terminateDetachedSession(session.pid);
+        });
+        item.add_child(killBtn);
+
+        return item;
+    }
+
     // -- snapshot application -----------------------------------------------
 
     _applyRegistrySnapshot(snapshot) {
@@ -500,7 +907,6 @@ export default class BoxxyExtension extends Extension {
             return;
 
         const catalog = snapshot.catalog || [];
-        log('[boxxy] chars: applying snapshot, catalog size=' + catalog.length);
         this._currentCatalog = catalog;
         this._charActive = true;
         this._rebuildCharacterItems(catalog);
@@ -509,7 +915,6 @@ export default class BoxxyExtension extends Extension {
     // -- character menu items -----------------------------------------------
 
     _clearCharacterItems() {
-        // In St, destroy() removes the actor from its parent container.
         for (const item of this._charSection.items)
             item.destroy();
         this._charSection.items = [];
@@ -521,7 +926,6 @@ export default class BoxxyExtension extends Extension {
     }
 
     _rebuildCharacterItems(catalog) {
-        // Destroy old character rows (destroy removes from parent in St)
         for (const item of this._charSection.items)
             item.destroy();
         this._charSection.items = [];
@@ -536,10 +940,8 @@ export default class BoxxyExtension extends Extension {
         if (this._charSection.actionSep)
             this._charSection.actionSep.visible = hasCharacters;
 
-        if (!hasCharacters) {
-            log('[boxxy] chars: no characters in catalog');
+        if (!hasCharacters)
             return;
-        }
 
         const items = [];
         for (const info of catalog) {
@@ -552,12 +954,15 @@ export default class BoxxyExtension extends Extension {
             items.push(item);
         }
 
-        // Insert in reverse so catalog order is preserved
+        // Compute dynamic insertion index right after the Characters header item
+        const menuItems = this._indicator.menu._getMenuItems();
+        const headerIdx = menuItems.indexOf(this._charSection.header);
+        const insertAt = headerIdx >= 0 ? headerIdx + 1 : 3;
+
         for (let i = items.length - 1; i >= 0; i--)
-            this._indicator.menu.addMenuItem(items[i], this._charSection.insertAt);
+            this._indicator.menu.addMenuItem(items[i], insertAt);
 
         this._charSection.items = items;
-        log('[boxxy] chars: built ' + items.length + ' character rows');
     }
 
     _createCharacterItem(cfg, isActive, paneId, hasAvatar) {
@@ -605,7 +1010,6 @@ export default class BoxxyExtension extends Extension {
 
         if (isActive && paneId) {
             item.connect('activate', () => {
-                log('[boxxy] focus: character clicked, pane=' + paneId);
                 this._requestFocusPane(paneId);
             });
         }
