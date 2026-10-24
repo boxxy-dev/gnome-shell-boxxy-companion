@@ -36,6 +36,9 @@ This extension provides a GNOME Shell panel indicator to monitor and control the
 | `RequestRestoreDetached(u)` | Method. Takes `pid` (`0` = restore all). Restores into open window or queues for next launch. |
 | `TerminateDetachedSession(u)` | Method. Takes `pid` (`0` = terminate all). |
 | `DetachedSessionsChanged` | Signal. Pushed on detach/reattach/exit; carries `(s)` JSON payload. |
+| `GetPendingTasks` | Method. Returns `(s)` (JSON array of `PendingTaskInfo`). |
+| `CancelPendingTask(s, s)` | Method. Takes `(pane_id, task_id)` and cancels the scheduled task. |
+| `PendingTasksChanged` | Signal. Pushed when reminders/tasks are scheduled, completed, cancelled, or detached/reattached; carries `(s)` JSON payload. |
 
 *Note: The Rust daemon uses `zbus`, which converts `snake_case` to `PascalCase` on the wire.*
 

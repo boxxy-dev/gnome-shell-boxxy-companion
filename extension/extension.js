@@ -24,8 +24,11 @@ const METHOD_REQUEST_FOCUS         = 'RequestFocusPane';
 const METHOD_GET_DETACHED          = 'GetDetachedSessions';
 const METHOD_RESTORE_DETACHED      = 'RequestRestoreDetached';
 const METHOD_TERMINATE_DETACHED    = 'TerminateDetachedSession';
+const METHOD_GET_PENDING_TASKS     = 'GetPendingTasks';
+const METHOD_CANCEL_PENDING_TASK   = 'CancelPendingTask';
 const SIGNAL_CLAIMS_CHANGED        = 'ClaimsChanged';
 const SIGNAL_DETACHED_CHANGED      = 'DetachedSessionsChanged';
+const SIGNAL_PENDING_TASKS_CHANGED = 'PendingTasksChanged';
 
 const AVATAR_SIZE    = 24;
 const COLOR_DOT_SIZE = 12;
@@ -111,6 +114,65 @@ function getCharAvatarPath(slug) {
     return GLib.build_filenamev([configDir, slug, 'AVATAR.png']);
 }
 
+function formatTaskCountdown(dueAtUnix, fallbackRemainingSecs) {
+    const nowSec = Math.floor(GLib.get_real_time() / 1000000);
+    const rem = dueAtUnix > 0
+        ? Math.max(0, dueAtUnix - nowSec)
+        : Math.max(0, Number(fallbackRemainingSecs || 0));
+
+    if (rem <= 0)
+        return 'due now';
+    if (rem < 60)
+        return `in ${rem}s`;
+    if (rem < 3600) {
+        const m = Math.floor(rem / 60);
+        const s = rem % 60;
+        return s > 0 ? `in ${m}m ${s}s` : `in ${m}m`;
+    }
+    const h = Math.floor(rem / 3600);
+    const m = Math.floor((rem % 3600) / 60);
+    return m > 0 ? `in ${h}h ${m}m` : `in ${h}h`;
+}
+
+function formatTaskTypeLabel(taskType) {
+    if (taskType === 'Command')
+        return 'Command';
+    if (taskType === 'Query')
+        return 'Query';
+    return 'Reminder';
+}
+
+function formatCharacterName(raw) {
+    if (!raw || typeof raw !== 'string')
+        return '';
+    return raw
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+}
+
+function formatDetachedProcessName(session) {
+    let raw = (session?.foreground_process || '').trim();
+    if (!raw) {
+        const charName = formatCharacterName(session?.character_name);
+        return charName ? `${charName} (AI Agent)` : 'Background Process';
+    }
+    const colonIdx = raw.indexOf(':');
+    if (colonIdx > 0) {
+        const prefix = raw.slice(0, colonIdx).trim();
+        let rest = raw.slice(colonIdx + 1).trim();
+        rest = rest.replace(/^"(.+)"(\s*\(\+\d+\s+more\))?$/, '$1$2');
+        return `${formatCharacterName(prefix)}: ${rest}`;
+    }
+    if (session?.character_name && raw.toLowerCase().startsWith(session.character_name.toLowerCase())) {
+        const charName = formatCharacterName(session.character_name);
+        return charName + raw.slice(session.character_name.length);
+    }
+    return raw;
+}
+
 // ---- extension -----------------------------------------------------------
 
 export default class BoxxyExtension extends Extension {
@@ -126,16 +188,20 @@ export default class BoxxyExtension extends Extension {
         this._badgeLabel = null;
         this._statusItem = null;
         this._detachedSection = {};
+        this._tasksSection = {};
         this._charSection = {};
         this._toggleItem = null;
         this._restartItem = null;
 
         this._charSignalId = 0;
         this._detachedSignalId = 0;
+        this._tasksSignalId = 0;
         this._menuOpenSignalId = 0;
+        this._countdownTimerId = 0;
         this._charActive = false;
         this._currentCatalog = [];
         this._currentDetached = [];
+        this._currentTasks = [];
 
         this._buildIndicator();
         this._watchDaemon();
@@ -231,8 +297,15 @@ export default class BoxxyExtension extends Extension {
 
         const menu = this._indicator.menu;
         this._menuOpenSignalId = menu.connect('open-state-changed', (_menu, isOpen) => {
-            if (isOpen && this._proxy?.g_name_owner)
-                this._fetchDetachedSessions();
+            if (isOpen) {
+                if (this._proxy?.g_name_owner) {
+                    this._fetchDetachedSessions();
+                    this._fetchPendingTasks();
+                }
+                this._syncCountdownTimer();
+            } else {
+                this._stopCountdownTimer();
+            }
         });
 
         // Status line (index 0)
@@ -255,6 +328,22 @@ export default class BoxxyExtension extends Extension {
         // Detached items start at index 3
         this._detachedSection.insertAt = 3;
         this._detachedSection.items = [];
+
+        // Separator before pending reminders
+        this._tasksSection.headerSep = new PopupMenu.PopupSeparatorMenuItem();
+        this._tasksSection.headerSep.visible = false;
+        menu.addMenuItem(this._tasksSection.headerSep);
+
+        // Pending reminders header
+        this._tasksSection.header = new PopupMenu.PopupMenuItem('');
+        this._tasksSection.header.setOrnament(PopupMenu.Ornament.NONE);
+        this._tasksSection.header.reactive = false;
+        this._tasksSection.header.label.add_style_class_name('boxxy-char-header');
+        this._tasksSection.header.visible = false;
+        menu.addMenuItem(this._tasksSection.header);
+
+        this._tasksSection.items = [];
+        this._tasksSection.countdownLabels = [];
 
         // Separator before characters
         this._charSection.headerSep = new PopupMenu.PopupSeparatorMenuItem();
@@ -303,6 +392,7 @@ export default class BoxxyExtension extends Extension {
     }
 
     _destroyIndicator() {
+        this._stopCountdownTimer();
         if (this._menuOpenSignalId && this._indicator?.menu) {
             this._indicator.menu.disconnect(this._menuOpenSignalId);
             this._menuOpenSignalId = 0;
@@ -317,6 +407,10 @@ export default class BoxxyExtension extends Extension {
         this._detachedSection.items = [];
         this._detachedSection.headerItem = null;
         this._detachedSection.headerSep = null;
+        this._tasksSection.items = [];
+        this._tasksSection.countdownLabels = [];
+        this._tasksSection.header = null;
+        this._tasksSection.headerSep = null;
         this._charSection.items = [];
         this._charSection.header = null;
         this._charSection.headerSep = null;
@@ -353,6 +447,7 @@ export default class BoxxyExtension extends Extension {
     }
 
     _unwatchDaemon() {
+        this._stopCountdownTimer();
         if (this._ownerId && this._proxy) {
             this._proxy.disconnect(this._ownerId);
             this._ownerId = 0;
@@ -361,6 +456,7 @@ export default class BoxxyExtension extends Extension {
         this._agentProxy = null;
         this._unsubscribeCharacters();
         this._unsubscribeDetachedSessions();
+        this._unsubscribePendingTasks();
     }
 
     // -- status updates -----------------------------------------------------
@@ -393,21 +489,26 @@ export default class BoxxyExtension extends Extension {
             log('[boxxy] chars: already populated');
             return;
         }
-        log('[boxxy] daemon started, fetching registry and detached sessions');
+        log('[boxxy] daemon started, fetching registry, detached sessions, and pending tasks');
 
         this._ensureAgentProxy();
         this._fetchRegistry();
         this._fetchDetachedSessions();
+        this._fetchPendingTasks();
         this._subscribeCharacters();
         this._subscribeDetachedSessions();
+        this._subscribePendingTasks();
     }
 
     _onDaemonStopped() {
         log('[boxxy] daemon stopped, clearing state');
+        this._stopCountdownTimer();
         this._agentProxy = null;
         this._unsubscribeCharacters();
         this._unsubscribeDetachedSessions();
+        this._unsubscribePendingTasks();
         this._clearDetachedItems();
+        this._clearPendingTaskItems();
         this._clearCharacterItems();
         this._charActive = false;
     }
@@ -564,6 +665,7 @@ export default class BoxxyExtension extends Extension {
                         _proxy.call_finish(result);
                         log(`[boxxy] terminate: TerminateDetachedSession(${pid}) sent`);
                         this._fetchDetachedSessions();
+                        this._fetchPendingTasks();
                     } catch (e) {
                         logError(e, '[boxxy] terminate: TerminateDetachedSession failed');
                     }
@@ -571,6 +673,36 @@ export default class BoxxyExtension extends Extension {
             );
         } catch (e) {
             logError(e, '[boxxy] terminate: error calling TerminateDetachedSession');
+        }
+    }
+
+    _cancelPendingTask(paneId, taskId) {
+        if (!this._agentProxy || !this._agentProxy.g_name_owner) {
+            log('[boxxy] cancel task: agent proxy not ready');
+            return;
+        }
+
+        try {
+            const param = new GLib.Variant('(ss)', [String(paneId), String(taskId)]);
+            this._agentProxy.call(
+                METHOD_CANCEL_PENDING_TASK,
+                param,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                null,
+                (_proxy, result) => {
+                    try {
+                        _proxy.call_finish(result);
+                        log(`[boxxy] cancel task: CancelPendingTask(${paneId}, ${taskId}) sent`);
+                        this._fetchPendingTasks();
+                        this._fetchDetachedSessions();
+                    } catch (e) {
+                        logError(e, '[boxxy] cancel task: CancelPendingTask failed');
+                    }
+                },
+            );
+        } catch (e) {
+            logError(e, '[boxxy] cancel task: error calling CancelPendingTask');
         }
     }
 
@@ -709,6 +841,139 @@ export default class BoxxyExtension extends Extension {
         }
     }
 
+    _fetchPendingTasks() {
+        const agentProxy = new Gio.DBusProxy({
+            g_connection: Gio.DBus.session,
+            g_name: D_BUS_SERVICE,
+            g_object_path: AGENT_PATH,
+            g_interface_name: AGENT_IFACE,
+            g_flags: Gio.DBusProxyFlags.DO_NOT_AUTO_START,
+        });
+
+        agentProxy.init_async(
+            GLib.PRIORITY_DEFAULT,
+            null,
+            (proxy, result) => {
+                try {
+                    proxy.init_finish(result);
+                    proxy.call(
+                        METHOD_GET_PENDING_TASKS,
+                        null,
+                        Gio.DBusCallFlags.NONE,
+                        -1,
+                        null,
+                        (_p, callRes) => {
+                            try {
+                                const reply = _p.call_finish(callRes);
+                                if (!reply)
+                                    return;
+                                const [json] = reply.deepUnpack();
+                                this._applyPendingTasks(JSON.parse(json || '[]'));
+                            } catch (e) {
+                                logError(e, '[boxxy] tasks: ' + METHOD_GET_PENDING_TASKS + ' call error');
+                            }
+                        },
+                    );
+                } catch (e) {
+                    logError(e, '[boxxy] tasks: proxy init error');
+                }
+            },
+        );
+    }
+
+    _subscribePendingTasks() {
+        if (this._tasksSignalId)
+            return;
+
+        this._tasksSignalId = Gio.DBus.session.signal_subscribe(
+            D_BUS_SERVICE,
+            AGENT_IFACE,
+            SIGNAL_PENDING_TASKS_CHANGED,
+            AGENT_PATH,
+            null,
+            Gio.DBusSignalFlags.NONE,
+            (_conn, _sender, _path, _iface, _signal, params) => {
+                try {
+                    const [json] = params.deepUnpack();
+                    this._applyPendingTasks(JSON.parse(json || '[]'));
+                } catch (e) {
+                    logError(e, '[boxxy] tasks: ' + SIGNAL_PENDING_TASKS_CHANGED + ' error');
+                }
+            },
+        );
+    }
+
+    _unsubscribePendingTasks() {
+        if (this._tasksSignalId) {
+            Gio.DBus.session.signal_unsubscribe(this._tasksSignalId);
+            this._tasksSignalId = 0;
+        }
+    }
+
+    _updateBadge() {
+        if (!this._badgeLabel)
+            return;
+
+        const detachedList = Array.isArray(this._currentDetached) ? this._currentDetached : [];
+        const tasksList = Array.isArray(this._currentTasks) ? this._currentTasks : [];
+        const detachedWithoutTasks = detachedList.filter(
+            s => !(Number(s.pending_task_count || 0) > 0)
+        ).length;
+        const totalCount = detachedWithoutTasks + tasksList.length;
+        const anyWaiting = detachedList.some(s => Boolean(s.waiting_for_input));
+
+        if (totalCount > 0) {
+            this._badgeLabel.set_text(`${totalCount}`);
+            this._badgeLabel.visible = true;
+            if (anyWaiting)
+                this._badgeLabel.add_style_class_name('boxxy-panel-badge-warning');
+            else
+                this._badgeLabel.remove_style_class_name('boxxy-panel-badge-warning');
+        } else {
+            this._badgeLabel.visible = false;
+            this._badgeLabel.remove_style_class_name('boxxy-panel-badge-warning');
+        }
+    }
+
+    _syncCountdownTimer() {
+        const isMenuOpen = Boolean(this._indicator?.menu?.isOpen);
+        const hasTasks = Array.isArray(this._currentTasks) && this._currentTasks.length > 0;
+        if (!isMenuOpen || !hasTasks) {
+            this._stopCountdownTimer();
+            return;
+        }
+        if (this._countdownTimerId)
+            return;
+
+        this._countdownTimerId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT,
+            1,
+            () => {
+                if (!this._indicator?.menu?.isOpen || !this._currentTasks?.length) {
+                    this._countdownTimerId = 0;
+                    return GLib.SOURCE_REMOVE;
+                }
+                for (const entry of this._tasksSection.countdownLabels || []) {
+                    const {subLabel, task} = entry;
+                    if (subLabel) {
+                        const typeLabel = formatTaskTypeLabel(task.task_type);
+                        const countdown = formatTaskCountdown(task.due_at_unix, task.remaining_secs);
+                        const bgSuffix = task.is_detached ? ' • Background' : '';
+                        subLabel.set_text(`${typeLabel} • ${countdown}${bgSuffix}`);
+                    }
+                }
+                return GLib.SOURCE_CONTINUE;
+            },
+        );
+    }
+
+    _stopCountdownTimer() {
+        if (this._countdownTimerId) {
+            GLib.Source.remove(this._countdownTimerId);
+            this._countdownTimerId = 0;
+        }
+    }
+
     // -- detached background shells UI --------------------------------------
 
     _createDetachedHeaderItem() {
@@ -760,15 +1025,13 @@ export default class BoxxyExtension extends Extension {
         for (const item of this._detachedSection.items || [])
             item.destroy();
         this._detachedSection.items = [];
+        this._currentDetached = [];
 
         if (this._detachedSection.headerItem)
             this._detachedSection.headerItem.visible = false;
         if (this._detachedSection.headerSep)
             this._detachedSection.headerSep.visible = false;
-        if (this._badgeLabel) {
-            this._badgeLabel.visible = false;
-            this._badgeLabel.remove_style_class_name('boxxy-panel-badge-warning');
-        }
+        this._updateBadge();
     }
 
     _applyDetachedSessions(sessions) {
@@ -783,21 +1046,7 @@ export default class BoxxyExtension extends Extension {
         this._detachedSection.items = [];
 
         const count = list.length;
-        const anyWaiting = list.some(s => Boolean(s.waiting_for_input));
-
-        if (this._badgeLabel) {
-            if (count > 0) {
-                this._badgeLabel.set_text(`${count}`);
-                this._badgeLabel.visible = true;
-                if (anyWaiting)
-                    this._badgeLabel.add_style_class_name('boxxy-panel-badge-warning');
-                else
-                    this._badgeLabel.remove_style_class_name('boxxy-panel-badge-warning');
-            } else {
-                this._badgeLabel.visible = false;
-                this._badgeLabel.remove_style_class_name('boxxy-panel-badge-warning');
-            }
-        }
+        this._updateBadge();
 
         if (this._detachedSection.headerSep)
             this._detachedSection.headerSep.visible = count > 0;
@@ -815,8 +1064,12 @@ export default class BoxxyExtension extends Extension {
             items.push(this._createDetachedItem(s));
         }
 
+        const menuItems = this._indicator.menu._getMenuItems();
+        const headerIdx = menuItems.indexOf(this._detachedSection.headerItem);
+        const insertAt = headerIdx >= 0 ? headerIdx + 1 : this._detachedSection.insertAt;
+
         for (let i = items.length - 1; i >= 0; i--)
-            this._indicator.menu.addMenuItem(items[i], this._detachedSection.insertAt);
+            this._indicator.menu.addMenuItem(items[i], insertAt);
 
         this._detachedSection.items = items;
     }
@@ -828,13 +1081,31 @@ export default class BoxxyExtension extends Extension {
         });
         item.add_style_class_name('boxxy-detached-item');
 
-        const termIcon = new St.Icon({
-            icon_name: 'utilities-terminal-symbolic',
-            style_class: 'boxxy-detached-icon',
-            icon_size: 16,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        item.add_child(termIcon);
+        const charObj = (this._currentCatalog || []).find(
+            c => (session.character_id && c.config.id === session.character_id) ||
+                 (session.character_slug && c.config.name === session.character_slug),
+        );
+        const slug = session.character_slug || charObj?.config?.name || '';
+        const avatarPath = slug ? getCharAvatarPath(slug) : '';
+
+        if (avatarPath && GLib.file_test(avatarPath, GLib.FileTest.EXISTS)) {
+            const avatarFile = Gio.File.new_for_path(avatarPath);
+            const avatar = new St.Icon({
+                gicon: new Gio.FileIcon({file: avatarFile}),
+                style_class: 'boxxy-char-avatar',
+                icon_size: AVATAR_SIZE,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            item.add_child(avatar);
+        } else {
+            const termIcon = new St.Icon({
+                icon_name: 'utilities-terminal-symbolic',
+                style_class: 'boxxy-detached-icon',
+                icon_size: 16,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            item.add_child(termIcon);
+        }
 
         const textBox = new St.BoxLayout({
             vertical: true,
@@ -842,7 +1113,7 @@ export default class BoxxyExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
         });
 
-        const procName = session.foreground_process || 'Background Process';
+        const procName = formatDetachedProcessName(session);
         const titleText = session.waiting_for_input
             ? `${procName} — Waiting for input`
             : procName;
@@ -861,8 +1132,17 @@ export default class BoxxyExtension extends Extension {
                 ? `${Math.floor(idleSecs / 60)}m idle`
                 : `${Math.floor(idleSecs / 3600)}h idle`;
 
+        let subText = `${shortCwd} • ${idleStr}`;
+        const charName = formatCharacterName(session.character_name);
+        if (charName && !titleText.toLowerCase().startsWith(charName.toLowerCase()))
+            subText += ` • ${charName}`;
+        if (session.pending_task_count > 0) {
+            const rLabel = session.pending_task_count === 1 ? 'reminder' : 'reminders';
+            subText += ` • ${session.pending_task_count} ${rLabel}`;
+        }
+
         const subLabel = new St.Label({
-            text: `PID ${session.pid} • ${shortCwd} • ${idleStr}`,
+            text: subText,
             style_class: 'boxxy-detached-subtitle',
         });
 
@@ -896,6 +1176,156 @@ export default class BoxxyExtension extends Extension {
             this._terminateDetachedSession(session.pid);
         });
         item.add_child(killBtn);
+
+        return item;
+    }
+
+    // -- pending reminders / tasks UI ---------------------------------------
+
+    _clearPendingTaskItems() {
+        this._stopCountdownTimer();
+        for (const item of this._tasksSection.items || [])
+            item.destroy();
+        this._tasksSection.items = [];
+        this._tasksSection.countdownLabels = [];
+        this._currentTasks = [];
+
+        if (this._tasksSection.header)
+            this._tasksSection.header.visible = false;
+        if (this._tasksSection.headerSep)
+            this._tasksSection.headerSep.visible = false;
+        this._updateBadge();
+    }
+
+    _applyPendingTasks(tasks) {
+        if (!this._proxy?.g_name_owner)
+            return;
+
+        const list = Array.isArray(tasks) ? tasks : [];
+        this._currentTasks = list;
+
+        for (const item of this._tasksSection.items || [])
+            item.destroy();
+        this._tasksSection.items = [];
+        this._tasksSection.countdownLabels = [];
+
+        const count = list.length;
+        this._updateBadge();
+
+        if (this._tasksSection.headerSep)
+            this._tasksSection.headerSep.visible = count > 0;
+        if (this._tasksSection.header) {
+            this._tasksSection.header.visible = count > 0;
+            if (count > 0)
+                this._tasksSection.header.label.set_text(`Pending Reminders (${count})`);
+        }
+
+        if (count === 0) {
+            this._stopCountdownTimer();
+            return;
+        }
+
+        const items = [];
+        for (const t of list) {
+            items.push(this._createPendingTaskItem(t));
+        }
+
+        const menuItems = this._indicator.menu._getMenuItems();
+        const headerIdx = menuItems.indexOf(this._tasksSection.header);
+        const insertAt = headerIdx >= 0 ? headerIdx + 1 : 3;
+
+        for (let i = items.length - 1; i >= 0; i--)
+            this._indicator.menu.addMenuItem(items[i], insertAt);
+
+        this._tasksSection.items = items;
+        this._syncCountdownTimer();
+    }
+
+    _createPendingTaskItem(task) {
+        const item = new PopupMenu.PopupBaseMenuItem({
+            reactive: false,
+            can_focus: false,
+        });
+        item.add_style_class_name('boxxy-detached-item');
+
+        const charObj = (this._currentCatalog || []).find(
+            c => c.config.id === task.character_id || c.config.name === task.character_slug,
+        );
+        const slug = task.character_slug || charObj?.config?.name || '';
+        const color = charObj?.config?.color || '#a855f7';
+        const avatarPath = slug ? getCharAvatarPath(slug) : '';
+
+        if (avatarPath && GLib.file_test(avatarPath, GLib.FileTest.EXISTS)) {
+            const avatarFile = Gio.File.new_for_path(avatarPath);
+            const avatar = new St.Icon({
+                gicon: new Gio.FileIcon({file: avatarFile}),
+                style_class: 'boxxy-char-avatar',
+                icon_size: AVATAR_SIZE,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            item.add_child(avatar);
+        } else {
+            item.add_child(this._createColorDot(color));
+        }
+
+        const textBox = new St.BoxLayout({
+            vertical: true,
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        const charName = formatCharacterName(task.character_name) || 'AI Agent';
+        const payload = (task.payload || 'Scheduled Reminder').trim();
+        const titleLabel = new St.Label({
+            text: `${charName}: ${payload}`,
+            style_class: 'boxxy-detached-title',
+        });
+
+        const typeLabel = formatTaskTypeLabel(task.task_type);
+        const countdown = formatTaskCountdown(task.due_at_unix, task.remaining_secs);
+        const bgSuffix = task.is_detached ? ' • Background' : '';
+
+        const subLabel = new St.Label({
+            text: `${typeLabel} • ${countdown}${bgSuffix}`,
+            style_class: 'boxxy-detached-subtitle',
+        });
+        this._tasksSection.countdownLabels.push({subLabel, task});
+
+        textBox.add_child(titleLabel);
+        textBox.add_child(subLabel);
+        item.add_child(textBox);
+
+        const focusLabel = task.is_detached ? 'Restore' : 'Focus';
+        const focusBtn = new St.Button({
+            label: focusLabel,
+            style_class: 'boxxy-action-btn boxxy-restore-btn',
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        focusBtn.connect('clicked', () => {
+            this._indicator?.menu?.close();
+            if (task.is_detached && task.pid) {
+                this._restoreDetachedSession(task.pid);
+            } else if (task.pane_id) {
+                this._requestFocusPane(task.pane_id);
+            }
+        });
+        item.add_child(focusBtn);
+
+        const cancelBtn = new St.Button({
+            label: 'Cancel',
+            style_class: 'boxxy-action-btn boxxy-kill-btn',
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        cancelBtn.connect('clicked', () => {
+            this._cancelPendingTask(task.pane_id, task.id);
+        });
+        item.add_child(cancelBtn);
 
         return item;
     }
@@ -992,7 +1422,7 @@ export default class BoxxyExtension extends Extension {
         }
 
         const nameLabel = new St.Label({
-            text: cfg.display_name || cfg.name,
+            text: formatCharacterName(cfg.display_name || cfg.name),
             style_class: 'boxxy-char-name',
         });
         item.add_child(nameLabel);
