@@ -89,7 +89,7 @@ function spawnAgentCommand(subcommand) {
 }
 
 function launchBoxxyTerminal() {
-    const cmdline = resolveTerminalCommand();
+    const cmdline = `${resolveTerminalCommand()} --present`;
     log(`[boxxy] launching Boxxy Terminal: ${cmdline}`);
     try {
         GLib.spawn_command_line_async(cmdline);
@@ -584,7 +584,7 @@ export default class BoxxyExtension extends Extension {
     }
 
     _requestFocusPane(paneId) {
-        this._focusBoxxyWindow();
+        const hasOpenWindow = this._focusBoxxyWindow();
 
         if (!this._agentProxy || !this._agentProxy.g_name_owner) {
             log('[boxxy] focus: agent proxy not ready');
@@ -603,6 +603,9 @@ export default class BoxxyExtension extends Extension {
                     try {
                         _proxy.call_finish(result);
                         log('[boxxy] focus: RequestFocusPane sent for ' + paneId);
+                        if (!hasOpenWindow)
+                            launchBoxxyTerminal();
+                        this._fetchDetachedSessions();
                     } catch (e) {
                         logError(e, '[boxxy] focus: RequestFocusPane failed');
                     }

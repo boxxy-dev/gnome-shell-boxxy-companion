@@ -20,7 +20,7 @@ This extension provides a GNOME Shell panel indicator to monitor and control the
   - Subscribes to the `ClaimsChanged` D-Bus signal for live updates.
   - Maintains a local catalog reference to map keyboard shortcuts to active `pane_id`s.
   - Renders rows with avatars (`~/.config/boxxy-terminal/boxxyclaw/characters/<slug>/AVATAR.png`) or fallback color dots.
-  - Clicking an active character (or triggering their shortcut) calls `RequestFocusPane(pane_id)` on the D-Bus interface to raise the terminal.
+  - Clicking an active character (or triggering their shortcut) calls `RequestFocusPane(pane_id)` on the D-Bus interface to raise the terminal (or automatically launch `boxxy-terminal --present` and restore the session if the character was running in the background with no window open).
 
 ## D-Bus Contract (Session Bus)
 - **Service / Well-known name:** `dev.boxxy.BoxxyAgent`
