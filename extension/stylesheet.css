@@ -1,146 +1,308 @@
-/* Boxxy Terminal — GNOME Shell Extension Styles */
+/* Boxxy Companion — GNOME Shell 50 Stylesheet */
 
-/* Panel indicator container & icon */
+/* ---- Top Panel Indicator ---- */
+
 .boxxy-panel-box {
-    spacing: 4px;
+    spacing: 5px;
 }
 
 .boxxy-panel-icon {
     padding: 0 2px;
 }
 
-/* Panel badge for detached background shells */
 .boxxy-panel-badge {
-    font-size: 0.8em;
+    font-size: 0.78em;
     font-weight: bold;
     color: #ffffff;
-    background-color: rgba(168, 85, 247, 0.85);
+    background-color: rgba(168, 85, 247, 0.88);
     border-radius: 99px;
-    padding: 1px 6px;
+    padding: 1px 7px;
     margin-left: 2px;
 }
 
 .boxxy-panel-badge-warning {
-    background-color: rgba(229, 165, 10, 0.92);
+    background-color: rgba(229, 165, 10, 0.94);
     color: #1e1e1e;
 }
 
-/* Status labels in the menu */
-.boxxy-status-label {
-    font-weight: bold;
+/* ---- Popup Menu Container ---- */
+
+.boxxy-popup-menu {
+    width: 380px;
 }
 
-.boxxy-status-running {
-    color: #33d17a;
+/* ---- Agent & Dev Agent Cards ---- */
+
+.boxxy-popup-menu .boxxy-agent-card {
+    padding: 12px 14px;
+    margin: 3px 0;
+    spacing: 12px;
+    border-radius: 14px;
+    background-color: rgba(255, 255, 255, 0.055);
 }
 
-.boxxy-status-stopped {
-    color: #e5a50a;
+.boxxy-popup-menu .boxxy-dev-card {
+    background-color: rgba(246, 211, 45, 0.065);
 }
 
-/* ---- Detached Background Shells section ---- */
-
-.boxxy-detached-item {
-    padding-left: 12px;
-    padding-right: 8px;
-    spacing: 8px;
+.boxxy-status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 99px;
+    margin-left: 2px;
 }
 
-.boxxy-detached-icon {
-    color: #c0bfbc;
+.boxxy-status-dot-running {
+    background-color: #33d17a;
 }
 
-.boxxy-detached-title {
-    font-size: 0.92em;
-    font-weight: bold;
+.boxxy-status-dot-dev {
+    background-color: #f6d32d;
 }
 
-.boxxy-detached-title-warning {
+.boxxy-status-dot-stopped {
+    background-color: #9a9996;
+}
+
+.boxxy-agent-title {
+    font-size: 1em;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.boxxy-agent-subtitle {
+    font-size: 0.82em;
+    color: #a8a7a3;
+}
+
+.boxxy-agent-subtitle-stale {
     color: #f8e45c;
 }
 
-.boxxy-detached-subtitle {
-    font-size: 0.78em;
-    color: #9a9996;
+/* ---- Circular Icon Buttons & Pill Buttons (Quick Settings Style) ---- */
+
+.boxxy-btn-group {
+    spacing: 8px;
 }
 
-.boxxy-action-btn {
-    font-size: 0.8em;
-    font-weight: bold;
-    border-radius: 6px;
-    padding: 3px 8px;
-    margin-left: 4px;
+.boxxy-circle-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 99px;
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #ebebeb;
+}
+
+.boxxy-circle-btn:hover,
+.boxxy-circle-btn:focus {
+    background-color: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+}
+
+.boxxy-circle-btn:active {
+    background-color: rgba(255, 255, 255, 0.28);
+}
+
+.boxxy-circle-btn-danger:hover,
+.boxxy-circle-btn-danger:focus {
+    background-color: rgba(224, 27, 36, 0.42);
+    color: #ffaba3;
+}
+
+.boxxy-pill-btn {
+    font-size: 0.84em;
+    font-weight: 700;
+    border-radius: 99px;
+    padding: 6px 14px;
 }
 
 .boxxy-restore-btn {
-    background-color: rgba(168, 85, 247, 0.25);
-    color: #d8b4fe;
+    background-color: rgba(168, 85, 247, 0.28);
+    color: #e9d5ff;
 }
 
-.boxxy-restore-btn:hover {
-    background-color: rgba(168, 85, 247, 0.45);
+.boxxy-restore-btn:hover,
+.boxxy-restore-btn:focus {
+    background-color: rgba(168, 85, 247, 0.5);
     color: #ffffff;
 }
 
 .boxxy-kill-btn {
-    background-color: rgba(224, 27, 36, 0.22);
-    color: #f66151;
+    background-color: rgba(224, 27, 36, 0.24);
+    color: #ff9b93;
 }
 
-.boxxy-kill-btn:hover {
-    background-color: rgba(224, 27, 36, 0.42);
+.boxxy-kill-btn:hover,
+.boxxy-kill-btn:focus {
+    background-color: rgba(224, 27, 36, 0.46);
     color: #ffffff;
 }
 
-/* ---- Character section ---- */
+/* ---- Section Headers & Cards (Shells / Reminders) ---- */
 
-/* Section header */
-.boxxy-char-header {
-    font-size: 0.85em;
-    font-weight: bold;
-    color: #9a9996;
-    padding-top: 6px;
-}
-
-/* Character row container */
-.boxxy-char-item {
-    padding-left: 12px;
-    padding-right: 8px;
+.boxxy-popup-menu .boxxy-section-header-item {
+    padding: 6px 14px 4px 14px;
     spacing: 8px;
 }
 
-/* Active (in-use) row is clickable */
-.boxxy-char-item-active:hover {
-    background-color: rgba(255, 255, 255, 0.08);
+.boxxy-section-header {
+    font-size: 0.82em;
+    font-weight: 700;
+    color: #9a9996;
 }
 
-.boxxy-char-item-active:active {
-    background-color: rgba(255, 255, 255, 0.14);
+.boxxy-popup-menu .boxxy-card-item {
+    padding: 10px 14px;
+    margin: 3px 0;
+    spacing: 12px;
+    border-radius: 13px;
+    background-color: rgba(255, 255, 255, 0.05);
 }
 
-/* Character name label */
-.boxxy-char-name {
-    font-size: 0.95em;
+.boxxy-shell-icon-circle {
+    border-radius: 99px;
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #deddda;
 }
 
-/* Character avatar icon */
+.boxxy-row-text-box {
+    spacing: 2px;
+}
+
+.boxxy-row-title {
+    font-size: 0.94em;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.boxxy-row-title-warning {
+    color: #f8e45c;
+}
+
+.boxxy-row-subtitle {
+    font-size: 0.8em;
+    color: #a8a7a3;
+}
+
+/* ---- Character Portraits & Roster ---- */
+
 .boxxy-char-avatar {
-    border-radius: 12px;
+    border-radius: 99px;
+    border-width: 2px;
+    border-style: solid;
 }
 
-/* Colour dot (fallback when no avatar) */
+.boxxy-char-monogram-label {
+    font-size: 0.96em;
+    font-weight: 800;
+    color: #ffffff;
+}
+
 .boxxy-color-dot {
-    border-radius: 6px;
+    border-radius: 99px;
     margin: 4px;
 }
 
-/* Status labels */
-.boxxy-char-status-active {
-    font-size: 0.85em;
-    color: #33d17a;
+.boxxy-popup-menu .boxxy-char-item {
+    padding: 10px 14px;
+    margin: 3px 0;
+    spacing: 12px;
+    border-radius: 13px;
+    background-color: rgba(255, 255, 255, 0.05);
 }
 
-.boxxy-char-status-idle {
-    font-size: 0.85em;
-    color: #9a9996;
+.boxxy-popup-menu .boxxy-char-item-active:hover,
+.boxxy-popup-menu .boxxy-char-item-active:focus {
+    background-color: rgba(255, 255, 255, 0.12);
+}
+
+.boxxy-popup-menu .boxxy-char-item-active:active {
+    background-color: rgba(255, 255, 255, 0.18);
+}
+
+.boxxy-char-text-box {
+    spacing: 2px;
+}
+
+.boxxy-char-name-row {
+    spacing: 7px;
+}
+
+.boxxy-char-name {
+    font-size: 0.96em;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.boxxy-char-accent-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 99px;
+}
+
+.boxxy-char-duty {
+    font-size: 0.8em;
+    color: #a8a7a3;
+}
+
+.boxxy-char-pill-active {
+    font-size: 0.78em;
+    font-weight: 700;
+    color: #33d17a;
+    background-color: rgba(51, 209, 122, 0.16);
+    border-radius: 99px;
+    padding: 4px 10px;
+}
+
+/* ---- Collapsible Available Characters Dropdown ---- */
+
+.boxxy-popup-menu .boxxy-available-submenu-header {
+    padding: 11px 14px;
+    margin: 3px 0 0 0;
+    font-size: 0.95em;
+    font-weight: 600;
+}
+
+.boxxy-available-submenu-box {
+    max-height: 360px;
+    padding: 6px 0;
+}
+
+.popup-sub-menu .boxxy-char-subitem {
+    padding: 9px 14px;
+    margin: 2px 6px;
+    spacing: 12px;
+    border-radius: 10px;
+}
+
+.popup-sub-menu .boxxy-char-subitem:hover,
+.popup-sub-menu .boxxy-char-subitem:focus {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.boxxy-char-open-icon {
+    color: rgba(255, 255, 255, 0.45);
+    margin-right: 2px;
+}
+
+.popup-sub-menu .boxxy-char-subitem:hover .boxxy-char-open-icon,
+.popup-sub-menu .boxxy-char-subitem:focus .boxxy-char-open-icon {
+    color: #ffffff;
+}
+
+/* ---- Footer Quick Actions ---- */
+
+.boxxy-popup-menu .boxxy-footer-item {
+    padding: 10px 14px;
+    margin: 1px 0;
+    spacing: 12px;
+    border-radius: 12px;
+}
+
+.boxxy-footer-icon {
+    color: #deddda;
+}
+
+.boxxy-footer-label {
+    font-size: 0.95em;
 }

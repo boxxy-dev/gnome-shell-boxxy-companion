@@ -1,51 +1,36 @@
 # Boxxy Companion — Developer Context
 
-This extension provides a GNOME Shell panel indicator to monitor and control the `boxxy-agent` daemon, restore or terminate detached background shells, and focus active AI characters.
+This extension provides a GNOME Shell 50 panel indicator to monitor and control `boxxy-agent` (plus `--dev` instances), restore or terminate detached background shells, inspect pending reminders, and focus or spawn AI characters.
 
-## Architecture
-- **Entry Point:** Modern GNOME 45+ class-based entry (`BoxxyExtension extends Extension` in `extension.js`).
-- **Target:** GNOME Shell 50. Uses `resource:///org/gnome/shell/...` ES module imports.
-- **Daemon Lifecycle:** `Gio.DBusProxy` tracks the `dev.boxxy.BoxxyAgent` `g-name-owner` property to detect when the daemon starts/stops without auto-starting it.
-- **Agent & Terminal Execution:** Shells out via `GLib.spawn_command_line_async` to `boxxy-agent` and `boxxy-terminal` (checking `~/.local/boxxy-terminal/bin/...`, `~/.local/boxxy-terminal/...`, `/app/bin/...`, `PATH`, or Flatpak).
-- **Detached Background Shells & Panel Badge:**
-  - Displays a live counter badge (`this._badgeLabel`) next to the panel icon whenever `GetDetachedSessions` / `DetachedSessionsChanged` reports running background shells (switching to `.boxxy-panel-badge-warning` when any shell has `waiting_for_input: true`).
-  - Renders a `Background Shells (N)` section in the popup menu with `Restore All` / `Kill All` header buttons and per-session `Restore` / `Kill` buttons.
-  - Clicking `Restore` calls `RequestRestoreDetached(pid)` on D-Bus and either focuses the open Boxxy window or launches `boxxy-terminal` (which automatically drains the queued PID via `TakePendingRestores` on startup).
-- **Preferences & Shortcuts:** 
-  - `prefs.js` provides a Libadwaita UI to map character slugs to 10 global shortcut slots.
-  - State is saved via `GSettings` (`org.gnome.shell.extensions.boxxy-companion`).
-  - `extension.js` registers these global keybindings via `Main.wm.addKeybinding`.
-- **Character Roster:**
-  - Fetches the current catalog via the `GetRegistrySnapshot` D-Bus method.
-  - Subscribes to the `ClaimsChanged` D-Bus signal for live updates.
-  - Maintains a local catalog reference to map keyboard shortcuts to active `pane_id`s.
-  - Renders rows with avatars (`~/.config/boxxy-terminal/boxxyclaw/characters/<slug>/AVATAR.png`) or fallback color dots.
-  - Clicking an active character (or triggering their shortcut) calls `RequestFocusPane(pane_id)` on the D-Bus interface to raise the terminal (or automatically launch `boxxy-terminal --present` and restore the session if the character was running in the background with no window open).
+## Architecture & Module Layout
+- **`extension/extension.js`:** Entry point (`BoxxyExtension extends Extension`). Wires lifecycle, `AgentClient`, `DevAgentWatcher`, `BoxxyIndicator`, and 10 global keybindings (`Main.wm.addKeybinding`).
+- **`extension/prefs.js`:** Libadwaita preferences UI mapping character slugs to 10 global shortcut slots (`org.gnome.shell.extensions.boxxy-companion`). Seeds immediately from `~/.config/boxxy-terminal/boxxyclaw/characters/*/CHARACTER.toml` so it works offline without blocking, then refreshes asynchronously from `GetRegistrySnapshot` (`NO_AUTO_START`).
+- **`extension/lib/` (Pure GI / D-Bus helpers — no `resource:///org/gnome/shell/...` imports):**
+  - `constants.js`: D-Bus bus names, paths, method/signal names, and sizing constants.
+  - `dbus.js`:
+    - `AgentClient`: Uses `Gio.bus_watch_name` + direct async `Gio.DBus.session.call` (`NO_AUTO_START`) with `Gio.Cancellable` abort on daemon vanish / `disable()` and monotonic `snapshot.revision` filtering.
+    - `DevAgentWatcher`: Subscribes to `org.freedesktop.DBus.NameOwnerChanged` with `MATCH_ARG0_NAMESPACE` (`dev.boxxy.BoxxyAgent.Devel`) + initial `ListNames` seed to detect both `--dev` and `--instance <slug>` daemons with zero polling.
+  - `launcher.js`: Binary/Flatpak path resolution (`--background` for daemon start, `--present` for terminal launch).
+  - `avatarCache.js`: `<configDir>::<slug>` `Gio.FileIcon` cache + CSS hex color sanitization (`sanitizeHexColor`).
+  - `format.js`: Pure formatting helpers for countdowns, CWDs, character names, and detached processes.
+- **`extension/ui/` (GNOME Shell St / PopupMenu views):**
+  - `windowFocus.js`: `focusBoxxyWindow` & `focusOrLaunchBoxxyWindow` (skips `.Devel` windows when focusing stable).
+  - `indicator.js`: `BoxxyIndicator` (`PanelMenu.Button`, panel badge, compact status header with Start/Reload/Stop controls, dynamic `DEV` agent rows, dirty-flagged lazy menu rendering while closed, and footer actions).
+  - `sections/charactersSection.js`: Renders `Active` characters directly and collapses `Available` characters into a `PopupSubMenuMenuItem` dropdown (clicking spawns via `RequestSpawnCharacter`).
+  - `sections/detachedSection.js`: Renders `Background Shells (N)` with `Restore All` / `Kill All` and per-shell controls.
+  - `sections/tasksSection.js`: Renders `Pending Reminders (N)` and manages the menu-open 1s `GLib.timeout_add_seconds` countdown timer.
 
 ## D-Bus Contract (Session Bus)
-- **Service / Well-known name:** `dev.boxxy.BoxxyAgent`
+- **Stable Service:** `dev.boxxy.BoxxyAgent`
+- **Dev Services:** `dev.boxxy.BoxxyAgent.Devel` and `dev.boxxy.BoxxyAgent.Devel.i_<slug>`
 - **Object Path:** `/dev/boxxy/Agent`
 - **Interface:** `dev.boxxy.BoxxyTerminal.Agent`
 
-| Method / Signal | Notes |
-|-----------------|-------|
-| `GetRegistrySnapshot` | Method. Returns `(s)` (JSON string of `RegistrySnapshot`). |
-| `RequestFocusPane(s)` | Method. Takes `pane_id` string. |
-| `ClaimsChanged` | Signal. Pushed on claim change; carries `(s)` JSON payload. |
-| `GetDetachedSessions` | Method. Returns `(s)` (JSON array of `DetachedSessionInfo`). |
-| `RequestRestoreDetached(u)` | Method. Takes `pid` (`0` = restore all). Restores into open window or queues for next launch. |
-| `TerminateDetachedSession(u)` | Method. Takes `pid` (`0` = terminate all). |
-| `DetachedSessionsChanged` | Signal. Pushed on detach/reattach/exit; carries `(s)` JSON payload. |
-| `GetPendingTasks` | Method. Returns `(s)` (JSON array of `PendingTaskInfo`). |
-| `CancelPendingTask(s, s)` | Method. Takes `(pane_id, task_id)` and cancels the scheduled task. |
-| `PendingTasksChanged` | Signal. Pushed when reminders/tasks are scheduled, completed, cancelled, or detached/reattached; carries `(s)` JSON payload. |
-
-*Note: The Rust daemon uses `zbus`, which converts `snake_case` to `PascalCase` on the wire.*
+Full public D-Bus API documentation lives in `boxxy-website` at `content/desktop-integrations.md` (`https://boxxy.dev/desktop-integrations`).
 
 ## GNOME Shell & GJS Gotchas
-- **Menu Items:** Use `item.destroy()` to remove items from a popup menu. Do NOT use `removeMenuItem()`.
-- **Insertion:** Use `menu.addMenuItem(item, index)` with a dynamically resolved index (`menu._getMenuItems().indexOf(...)`).
-- **D-Bus Proxies:** Initialize with GObject properties (`{ g_connection, g_name, … }`), not positional arguments.
-- **Signal Cleanup:** Every `Gio.DBus.session.signal_subscribe` or proxy listener created in `enable()` MUST be disconnected in `disable()` to prevent memory leaks during extension reloads.
-- **Keybindings:** Global shortcuts registered with `Main.wm.addKeybinding` MUST be explicitly unregistered in `disable()` using `Main.wm.removeKeybinding` to prevent "already registered" errors on reload.
-- **Styling:** Prefix all CSS classes with `boxxy-` to prevent Shell theme collisions.
+- **No `call_sync` on the Shell main thread:** Always use async `Gio.DBus.session.call` with a `Gio.Cancellable` cancelled in `disable()`.
+- **BoxLayout Orientation:** On GNOME Shell 50, use `orientation: Clutter.Orientation.VERTICAL` instead of deprecated `vertical: true`.
+- **Menu Sections:** Use `PopupMenu.PopupMenuSection` (`section.removeAll()`) rather than manual root-menu index arithmetic.
+- **Keybindings & Signals:** Every `Gio.bus_watch_name`, `signal_subscribe`, `GLib.timeout_add_seconds`, and `Main.wm.addKeybinding` registered in `enable()` MUST be cleaned up in `disable()` (which runs on every screen lock).
+- **Styling:** Prefix all CSS classes with `boxxy-` and validate dynamic hex colors via `sanitizeHexColor` before inline `style` use.
