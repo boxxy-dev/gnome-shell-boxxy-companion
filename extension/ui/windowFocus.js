@@ -29,8 +29,8 @@ export function focusBoxxyWindow() {
 
     const allWindows = global.display.get_tab_list(Meta.TabList.NORMAL, null);
     for (const win of allWindows) {
-        const wmClass = win.get_wm_class?.() ?? '';
-        const title = win.get_title?.() ?? '';
+        const wmClass = win.get_wm_class() ?? '';
+        const title = win.get_title() ?? '';
         if (wmClass.startsWith('dev.boxxy.BoxxyTerminal.Devel'))
             continue;
         if ((wmClass + title).toLowerCase().includes('boxxy')) {

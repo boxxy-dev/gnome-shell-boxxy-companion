@@ -35,6 +35,5 @@ export const SIGNAL_PENDING_TASKS_CHANGED = 'PendingTasksChanged';
 // UI sizing
 export const AVATAR_SIZE = 36;
 export const ROW_AVATAR_SIZE = 32;
-export const COLOR_DOT_SIZE = 10;
 export const SHORTCUT_SLOTS = 10;
 export const DEFAULT_ACCENT_HEX = '#a855f7';

@@ -1,6 +1,6 @@
 # Boxxy Terminal Companion Extension
 
-A GNOME Shell 50 extension that serves as a companion to [Boxxy Terminal](https://github.com/boxxy-dev/boxxy), providing a top-panel indicator to monitor `boxxy-agent`, manage **Detached Background Shells**, track **Pending Reminders**, and focus or spawn AI characters.
+A GNOME Shell 51+ extension that serves as a companion to [Boxxy Terminal](https://github.com/boxxy-dev/boxxy), providing a top-panel indicator to monitor `boxxy-agent`, manage **Detached Background Shells**, track **Pending Reminders**, and focus or spawn AI characters.
 
 ## Features
 

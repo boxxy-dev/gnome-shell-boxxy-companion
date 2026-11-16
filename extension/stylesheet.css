@@ -1,4 +1,4 @@
-/* Boxxy Companion — GNOME Shell 50 Stylesheet */
+/* Boxxy Companion — GNOME Shell 51+ Stylesheet */
 
 /* ---- Top Panel Indicator ---- */
 
@@ -196,11 +196,6 @@
     font-size: 0.96em;
     font-weight: 800;
     color: #ffffff;
-}
-
-.boxxy-color-dot {
-    border-radius: 99px;
-    margin: 4px;
 }
 
 .boxxy-popup-menu .boxxy-char-item {

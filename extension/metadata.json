@@ -1,10 +1,10 @@
 {
   "name": "Boxxy Terminal",
-  "description": "Companion for Boxxy",
+  "description": "Monitor and control Boxxy Terminal's background agent, restore detached shells, track pending reminders, and focus or spawn AI characters.",
   "uuid": "boxxy@boxxy.dev",
   "url": "https://github.com/boxxy-dev/gnome-shell-boxxy-companion",
   "shell-version": [
-    "50"
+    "51"
   ],
   "settings-schema": "org.gnome.shell.extensions.boxxy-companion"
 }

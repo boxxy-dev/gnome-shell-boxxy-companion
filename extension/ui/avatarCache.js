@@ -3,12 +3,12 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 
-import {AVATAR_SIZE, COLOR_DOT_SIZE} from './constants.js';
-import {hexToRgba, sanitizeHexColor} from './format.js';
+import {AVATAR_SIZE} from '../lib/constants.js';
+import {hexToRgba, sanitizeHexColor} from '../lib/format.js';
 
 /**
  * Caches character avatar `file://` URIs keyed by `<configDir>::<slug>` and renders
- * true circular portraits via `St.Bin` `background-image` (with a signature-color
+ * circular portraits via `St.Bin` `background-image` (with a signature-color
  * ring and initial-letter monogram fallback).
  */
 export class AvatarCache {
@@ -93,15 +93,4 @@ export class AvatarCache {
             }),
         });
     }
-}
-
-export function createColorDot(hexColor, size = COLOR_DOT_SIZE) {
-    const safeColor = sanitizeHexColor(hexColor);
-    return new St.Bin({
-        style_class: 'boxxy-color-dot',
-        style: `background-color: ${safeColor};`,
-        width: size,
-        height: size,
-        y_align: Clutter.ActorAlign.CENTER,
-    });
 }

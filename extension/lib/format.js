@@ -76,6 +76,17 @@ export function formatCharacterName(raw) {
         .join(' ');
 }
 
+export function prettifyCharacterSlug(raw) {
+    if (!raw || typeof raw !== 'string')
+        return '';
+    return raw
+        .trim()
+        .split(/[\s_-]+/)
+        .filter(Boolean)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+}
+
 export function formatCharacterDuty(raw) {
     if (!raw || typeof raw !== 'string')
         return '';

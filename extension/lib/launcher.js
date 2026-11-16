@@ -1,3 +1,4 @@
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import {AGENT_BINARY, TERMINAL_BINARY} from './constants.js';
@@ -40,13 +41,7 @@ export function resolveTerminalArgv(extraArgs = []) {
 
 function spawnDetachedArgv(argv) {
     try {
-        GLib.spawn_async(
-            null,
-            argv,
-            null,
-            GLib.SpawnFlags.SEARCH_PATH,
-            null
-        );
+        Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
         return true;
     } catch (e) {
         console.error(`[boxxy] failed to spawn ${argv.join(' ')}:`, e);
@@ -56,7 +51,6 @@ function spawnDetachedArgv(argv) {
 
 export function startAgentDaemon() {
     const binary = resolveAgentBinary();
-    // Pass `--background` so `boxxy-agent` double-forks and detaches cleanly from gnome-shell.
     return spawnDetachedArgv([binary, '--background']);
 }
 

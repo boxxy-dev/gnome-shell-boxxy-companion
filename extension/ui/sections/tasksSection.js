@@ -67,8 +67,13 @@ export class TasksSection {
     }
 
     startCountdown() {
-        if (this._timerId || this._countdownEntries.length === 0)
+        if (this._countdownEntries.length === 0)
             return;
+
+        if (this._timerId) {
+            GLib.Source.remove(this._timerId);
+            this._timerId = 0;
+        }
 
         this._tickCountdowns();
         this._timerId = GLib.timeout_add_seconds(
@@ -83,6 +88,7 @@ export class TasksSection {
                 return GLib.SOURCE_CONTINUE;
             }
         );
+        GLib.Source.set_name_by_id(this._timerId, '[boxxy] task-countdown');
     }
 
     stopCountdown() {

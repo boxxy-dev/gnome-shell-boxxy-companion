@@ -12,6 +12,7 @@ import {TasksSection} from './sections/tasksSection.js';
 
 export class BoxxyIndicator {
     constructor({
+        uuid,
         extensionPath,
         avatarCache,
         onStartAgent,
@@ -28,6 +29,7 @@ export class BoxxyIndicator {
         onTerminateDetached,
         onCancelTask,
     }) {
+        this._uuid = uuid;
         this._avatarCache = avatarCache;
         this._onStartAgent = onStartAgent;
         this._onStopAgent = onStopAgent;
@@ -97,7 +99,7 @@ export class BoxxyIndicator {
             if (isOpen) {
                 this._flushDirtySections();
                 this._tasksSection.startCountdown();
-                this._onMenuOpened?.();
+                this._onMenuOpened();
             } else {
                 this._tasksSection.stopCountdown();
             }
@@ -168,13 +170,13 @@ export class BoxxyIndicator {
             }
         ));
 
-        Main.panel.addToStatusArea('boxxy-terminal', this.button);
+        Main.panel.addToStatusArea(this._uuid, this.button);
         this._syncAgentHeader();
     }
 
     destroy() {
-        this._tasksSection?.destroy();
-        if (this._menuOpenSignalId && this.button?.menu) {
+        this._tasksSection.destroy();
+        if (this._menuOpenSignalId && this.button) {
             this.button.menu.disconnect(this._menuOpenSignalId);
             this._menuOpenSignalId = 0;
         }
@@ -182,9 +184,20 @@ export class BoxxyIndicator {
             this.button.destroy();
             this.button = null;
         }
+        this._devSection = null;
+        this._detachedSection = null;
+        this._tasksSection = null;
+        this._charactersSection = null;
+        this._statusDot = null;
+        this._agentTitleLabel = null;
+        this._agentSubLabel = null;
+        this._startBtn = null;
+        this._runningControls = null;
         this._panelBox = null;
         this._panelIcon = null;
         this._badgeLabel = null;
+        this._iconOn = null;
+        this._iconOff = null;
     }
 
     get isMenuOpen() {
@@ -329,7 +342,7 @@ export class BoxxyIndicator {
             this._charactersSection.clear();
             this._updateBadge();
         }
-        this._panelIcon?.set_gicon(running ? this._iconOn : this._iconOff);
+        this._panelIcon.set_gicon(running ? this._iconOn : this._iconOff);
         this._syncAgentHeader();
     }
 

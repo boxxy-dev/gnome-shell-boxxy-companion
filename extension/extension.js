@@ -3,15 +3,15 @@ import Shell from 'gi://Shell';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-import { AvatarCache } from './lib/avatarCache.js';
-import { SHORTCUT_SLOTS } from './lib/constants.js';
-import { AgentClient, DevAgentWatcher } from './lib/dbus.js';
-import { getActivePaneId, isCharacterActive } from './lib/format.js';
+import {SHORTCUT_SLOTS} from './lib/constants.js';
+import {AgentClient, DevAgentWatcher} from './lib/dbus.js';
+import {getActivePaneId, isCharacterActive} from './lib/format.js';
 import {
     launchBoxxyTerminal,
     startAgentDaemon,
 } from './lib/launcher.js';
-import { BoxxyIndicator } from './ui/indicator.js';
+import {AvatarCache} from './ui/avatarCache.js';
+import {BoxxyIndicator} from './ui/indicator.js';
 import {
     focusBoxxyWindow,
     focusOrLaunchBoxxyWindow,
@@ -24,6 +24,7 @@ export default class BoxxyExtension extends Extension {
         this._avatarCache = new AvatarCache();
 
         this._indicator = new BoxxyIndicator({
+            uuid: this.uuid,
             extensionPath: this.path,
             avatarCache: this._avatarCache,
             onStartAgent: () => startAgentDaemon(),
@@ -90,8 +91,6 @@ export default class BoxxyExtension extends Extension {
         this._settings = null;
     }
 
-    // -- global keybindings -------------------------------------------------
-
     _setupShortcuts() {
         for (let i = 1; i <= SHORTCUT_SLOTS; i++) {
             Main.wm.addKeybinding(
@@ -110,7 +109,10 @@ export default class BoxxyExtension extends Extension {
     }
 
     async _handleShortcut(index) {
-        const slugs = this._settings?.get_strv('shortcut-slugs') || [];
+        if (!this._settings)
+            return;
+
+        const slugs = this._settings.get_strv('shortcut-slugs');
         const slug = (slugs[index - 1] || '').trim();
         if (!slug)
             return;
@@ -132,8 +134,6 @@ export default class BoxxyExtension extends Extension {
 
         await this._spawnCharacter(charInfo?.config?.id || slug);
     }
-
-    // -- actions ------------------------------------------------------------
 
     async _focusPane(paneId) {
         const hasOpenWindow = focusBoxxyWindow();

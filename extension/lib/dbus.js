@@ -30,16 +30,31 @@ import {
 import {formatDevInstanceLabel} from './format.js';
 import {spawnAgentSubcommand} from './launcher.js';
 
-function isCancelled(error) {
-    return Boolean(error?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED));
+function isExpectedDisconnect(error) {
+    if (!(error instanceof GLib.Error))
+        return false;
+
+    return (
+        error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED) ||
+        error.matches(Gio.DBusError, Gio.DBusError.SERVICE_UNKNOWN) ||
+        error.matches(Gio.DBusError, Gio.DBusError.NAME_HAS_NO_OWNER) ||
+        error.matches(Gio.DBusError, Gio.DBusError.NO_REPLY)
+    );
 }
 
 function isUnknownMethod(error) {
+    if (error instanceof GLib.Error && error.matches(Gio.DBusError, Gio.DBusError.UNKNOWN_METHOD))
+        return true;
+
     const msg = error?.message || '';
-    return (
-        Boolean(error?.matches?.(Gio.DBusError, Gio.DBusError.UNKNOWN_METHOD)) ||
-        msg.includes('UnknownMethod')
-    );
+    return msg.includes('UnknownMethod');
+}
+
+function reportDbusError(context, error) {
+    if (isExpectedDisconnect(error))
+        return;
+
+    console.error(`[boxxy] ${context}:`, error);
 }
 
 function callSessionBus(busName, objectPath, ifaceName, methodName, params, replyType, cancellable) {
@@ -67,8 +82,8 @@ function callSessionBus(busName, objectPath, ifaceName, methodName, params, repl
 
 /**
  * Reactive session-bus client for the primary `dev.boxxy.BoxxyAgent` daemon.
- * Uses `Gio.Bus.watch_name` + direct async D-Bus calls (zero `Introspect` proxy churn)
- * and cancels all in-flight calls cleanly on daemon stop or extension `disable()`.
+ * Uses `Gio.bus_watch_name` + direct async D-Bus calls and cancels all in-flight
+ * calls cleanly on daemon stop or extension `disable()`.
  */
 export class AgentClient {
     constructor(callbacks) {
@@ -113,7 +128,7 @@ export class AgentClient {
         this._cancellable = new Gio.Cancellable();
 
         this._subscribeSignals();
-        this._callbacks.onStateChanged?.(true);
+        this._callbacks.onStateChanged(true);
 
         this.refreshAll();
     }
@@ -124,7 +139,7 @@ export class AgentClient {
         this._running = false;
         this._lastRevision = -1;
         if (wasRunning || this._watchId)
-            this._callbacks.onStateChanged?.(false);
+            this._callbacks.onStateChanged(false);
     }
 
     _teardownSession() {
@@ -151,7 +166,7 @@ export class AgentClient {
                         const [json] = params.deepUnpack();
                         handler(json);
                     } catch (e) {
-                        console.error(`[boxxy] signal ${signalName} unpack error:`, e);
+                        reportDbusError(`signal ${signalName}`, e);
                     }
                 }
             );
@@ -161,29 +176,17 @@ export class AgentClient {
         subscribe(SIGNAL_CLAIMS_CHANGED, json => {
             if (!json)
                 return;
-            try {
-                this._handleSnapshot(JSON.parse(json));
-            } catch (e) {
-                console.error('[boxxy] ClaimsChanged JSON error:', e);
-            }
+            this._handleSnapshot(JSON.parse(json));
         });
 
         subscribe(SIGNAL_DETACHED_CHANGED, json => {
-            try {
-                const list = JSON.parse(json || '[]');
-                this._callbacks.onDetachedChanged?.(Array.isArray(list) ? list : []);
-            } catch (e) {
-                console.error('[boxxy] DetachedSessionsChanged JSON error:', e);
-            }
+            const list = JSON.parse(json || '[]');
+            this._callbacks.onDetachedChanged(Array.isArray(list) ? list : []);
         });
 
         subscribe(SIGNAL_PENDING_TASKS_CHANGED, json => {
-            try {
-                const list = JSON.parse(json || '[]');
-                this._callbacks.onTasksChanged?.(Array.isArray(list) ? list : []);
-            } catch (e) {
-                console.error('[boxxy] PendingTasksChanged JSON error:', e);
-            }
+            const list = JSON.parse(json || '[]');
+            this._callbacks.onTasksChanged(Array.isArray(list) ? list : []);
         });
     }
 
@@ -196,7 +199,7 @@ export class AgentClient {
         if (rev >= 0)
             this._lastRevision = rev;
 
-        this._callbacks.onCatalogChanged?.(Array.isArray(snapshot.catalog) ? snapshot.catalog : [], rev);
+        this._callbacks.onCatalogChanged(Array.isArray(snapshot.catalog) ? snapshot.catalog : [], rev);
     }
 
     async _call(methodName, params = null, replyType = null) {
@@ -241,10 +244,10 @@ export class AgentClient {
                 return;
             const [json] = reply.deepUnpack();
             const parsed = JSON.parse(json || '{}');
-            this._callbacks.onStatusMetadata?.(parsed);
+            this._callbacks.onStatusMetadata(parsed);
             return;
         } catch (e) {
-            if (isCancelled(e))
+            if (isExpectedDisconnect(e))
                 return;
             if (!isUnknownMethod(e)) {
                 console.debug('[boxxy] GetDaemonStatus failed:', e.message);
@@ -252,7 +255,7 @@ export class AgentClient {
             }
         }
 
-        // Graceful fallback for older boxxy-agent binaries prior to GetDaemonStatus
+        // Fallback for older boxxy-agent binaries prior to GetDaemonStatus
         try {
             const [verReply, cfgReply] = await Promise.all([
                 this._call(METHOD_GET_VERSION, null, new GLib.VariantType('(s)')),
@@ -264,13 +267,13 @@ export class AgentClient {
             const [configDir] = cfgReply ? cfgReply.deepUnpack() : [''];
             const isStale = rawVersion.endsWith('-stale');
             const version = isStale ? rawVersion.slice(0, -'-stale'.length) : rawVersion;
-            this._callbacks.onStatusMetadata?.({
+            this._callbacks.onStatusMetadata({
                 version,
                 is_stale_binary: isStale,
                 config_dir: configDir,
             });
         } catch (e) {
-            if (!isCancelled(e))
+            if (!isExpectedDisconnect(e))
                 console.debug('[boxxy] fallback version fetch failed:', e.message);
         }
     }
@@ -287,8 +290,7 @@ export class AgentClient {
             const [json] = reply.deepUnpack();
             this._handleSnapshot(JSON.parse(json || '{}'));
         } catch (e) {
-            if (!isCancelled(e))
-                console.error('[boxxy] GetRegistrySnapshot error:', e);
+            reportDbusError('GetRegistrySnapshot failed', e);
         }
     }
 
@@ -303,10 +305,9 @@ export class AgentClient {
                 return;
             const [json] = reply.deepUnpack();
             const list = JSON.parse(json || '[]');
-            this._callbacks.onDetachedChanged?.(Array.isArray(list) ? list : []);
+            this._callbacks.onDetachedChanged(Array.isArray(list) ? list : []);
         } catch (e) {
-            if (!isCancelled(e))
-                console.error('[boxxy] GetDetachedSessions error:', e);
+            reportDbusError('GetDetachedSessions failed', e);
         }
     }
 
@@ -321,10 +322,9 @@ export class AgentClient {
                 return;
             const [json] = reply.deepUnpack();
             const list = JSON.parse(json || '[]');
-            this._callbacks.onTasksChanged?.(Array.isArray(list) ? list : []);
+            this._callbacks.onTasksChanged(Array.isArray(list) ? list : []);
         } catch (e) {
-            if (!isCancelled(e))
-                console.error('[boxxy] GetPendingTasks error:', e);
+            reportDbusError('GetPendingTasks failed', e);
         }
     }
 
@@ -337,8 +337,7 @@ export class AgentClient {
             void this.fetchDetachedSessions();
             return true;
         } catch (e) {
-            if (!isCancelled(e))
-                console.error('[boxxy] RequestFocusPane failed:', e);
+            reportDbusError('RequestFocusPane failed', e);
             return false;
         }
     }
@@ -351,13 +350,11 @@ export class AgentClient {
             );
             return true;
         } catch (e) {
-            if (isCancelled(e))
-                return false;
             if (isUnknownMethod(e)) {
-                console.debug('[boxxy] RequestSpawnCharacter not supported by running daemon; opening window');
+                console.debug('[boxxy] RequestSpawnCharacter not supported by running daemon');
                 return false;
             }
-            console.error('[boxxy] RequestSpawnCharacter failed:', e);
+            reportDbusError('RequestSpawnCharacter failed', e);
             return false;
         }
     }
@@ -371,8 +368,7 @@ export class AgentClient {
             void this.fetchDetachedSessions();
             return true;
         } catch (e) {
-            if (!isCancelled(e))
-                console.error('[boxxy] RequestRestoreDetached failed:', e);
+            reportDbusError('RequestRestoreDetached failed', e);
             return false;
         }
     }
@@ -386,8 +382,7 @@ export class AgentClient {
             void this.fetchDetachedSessions();
             void this.fetchPendingTasks();
         } catch (e) {
-            if (!isCancelled(e))
-                console.error('[boxxy] TerminateDetachedSession failed:', e);
+            reportDbusError('TerminateDetachedSession failed', e);
         }
     }
 
@@ -400,8 +395,7 @@ export class AgentClient {
             void this.fetchPendingTasks();
             void this.fetchDetachedSessions();
         } catch (e) {
-            if (!isCancelled(e))
-                console.error('[boxxy] CancelPendingTask failed:', e);
+            reportDbusError('CancelPendingTask failed', e);
         }
     }
 
@@ -409,13 +403,11 @@ export class AgentClient {
         try {
             await this._call(METHOD_REQUEST_RELOAD);
         } catch (e) {
-            if (isCancelled(e))
-                return;
             if (isUnknownMethod(e)) {
                 spawnAgentSubcommand('restart');
                 return;
             }
-            console.error('[boxxy] RequestReload failed:', e);
+            reportDbusError('RequestReload failed', e);
         }
     }
 
@@ -423,13 +415,11 @@ export class AgentClient {
         try {
             await this._call(METHOD_REQUEST_STOP);
         } catch (e) {
-            if (isCancelled(e))
-                return;
             if (isUnknownMethod(e)) {
                 spawnAgentSubcommand('stop');
                 return;
             }
-            console.error('[boxxy] RequestStop failed:', e);
+            reportDbusError('RequestStop failed', e);
         }
     }
 }
@@ -443,8 +433,8 @@ function isDevAgentBusName(name) {
 
 /**
  * Zero-polling watcher for isolated development daemons (`dev.boxxy.BoxxyAgent.Devel`
- * and `dev.boxxy.BoxxyAgent.Devel.i_<slug>`). Uses D-Bus `arg0namespace` kernel/daemon
- * filtering so GNOME Shell is only notified when a Boxxy dev daemon starts or exits.
+ * and `dev.boxxy.BoxxyAgent.Devel.i_<slug>`). Uses D-Bus `arg0namespace` matching
+ * so GNOME Shell is only notified when a Boxxy dev daemon starts or exits.
  */
 export class DevAgentWatcher {
     constructor(onChanged) {
@@ -525,7 +515,7 @@ export class DevAgentWatcher {
             if (changed)
                 this._emitChanged();
         } catch (e) {
-            if (!isCancelled(e))
+            if (!isExpectedDisconnect(e))
                 console.debug('[boxxy] DevAgentWatcher ListNames failed:', e.message);
         }
     }
@@ -565,7 +555,7 @@ export class DevAgentWatcher {
                 this._emitChanged();
             }
         } catch (e) {
-            if (!isCancelled(e))
+            if (!isExpectedDisconnect(e))
                 console.debug(`[boxxy] dev-agent GetVersion(${busName}) failed:`, e.message);
         }
     }
@@ -574,7 +564,7 @@ export class DevAgentWatcher {
         const sorted = Array.from(this._instances.values()).sort((a, b) =>
             a.busName.localeCompare(b.busName)
         );
-        this._onChanged?.(sorted);
+        this._onChanged(sorted);
     }
 
     async stopInstance(busName) {
@@ -589,8 +579,7 @@ export class DevAgentWatcher {
                 this._cancellable
             );
         } catch (e) {
-            if (!isCancelled(e))
-                console.error(`[boxxy] RequestStop(${busName}) failed:`, e);
+            reportDbusError(`RequestStop(${busName}) failed`, e);
         }
     }
 
@@ -606,8 +595,7 @@ export class DevAgentWatcher {
                 this._cancellable
             );
         } catch (e) {
-            if (!isCancelled(e))
-                console.error(`[boxxy] RequestReload(${busName}) failed:`, e);
+            reportDbusError(`RequestReload(${busName}) failed`, e);
         }
     }
 }
